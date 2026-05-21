@@ -1,6 +1,6 @@
-CREATE TABLE IF NOT EXISTS invites (
+﻿CREATE TABLE IF NOT EXISTS invites (
     invite_id TEXT PRIMARY KEY,
-    invite_code_hash TEXT NOT NULL,
+    invite_code_hash TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL,
     claimed_at TEXT,
     claimed_by_account_id TEXT,
