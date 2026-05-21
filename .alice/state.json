@@ -1,0 +1,10 @@
+{
+  "server_url": "http://localhost:8080",
+  "account_id": "93d7f023-7881-41e7-b9a9-3372b248722e",
+  "display_name": "alice-cli",
+  "device_id": "b11092bd-fa7d-4fc1-ac5e-18da05caf93c",
+  "device_label": "alice-cli-1",
+  "public_identity_key": "stub-public-identity-key-alice-cli-1",
+  "public_prekey_bundle": "stub-prekey-bundle-alice-cli-1",
+  "protocol_version": "stub-v0"
+}
