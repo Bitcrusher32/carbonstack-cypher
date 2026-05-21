@@ -13,17 +13,22 @@ import (
 )
 
 type API struct {
-	store *db.Store
+	store   *db.Store
+	devMode bool
 }
 
-func New(store *db.Store) *API {
-	return &API{store: store}
+func New(store *db.Store, devMode bool) *API {
+	return &API{
+		store:   store,
+		devMode: devMode,
+	}
 }
 
 func (a *API) Routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /v0/health", a.health)
+	mux.HandleFunc("POST /v0/dev/invites", a.createDevInvite)
 	mux.HandleFunc("POST /v0/invites/claim", a.claimInvite)
 	mux.HandleFunc("POST /v0/devices/register", a.registerDevice)
 	mux.HandleFunc("GET /v0/accounts/", a.accountDevices)
@@ -39,6 +44,64 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 		"status":      "ok",
 		"service":     "carbonstack-cypher",
 		"api_version": "v0",
+	})
+}
+
+type createDevInviteRequest struct {
+	InviteCode string `json:"invite_code"`
+}
+
+func (a *API) createDevInvite(w http.ResponseWriter, r *http.Request) {
+	if !a.devMode {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+
+	var req createDevInviteRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	req.InviteCode = strings.TrimSpace(req.InviteCode)
+	if req.InviteCode == "" {
+		req.InviteCode = "dev-" + uuid.NewString()
+	}
+
+	codeHash := db.HashInviteCode(req.InviteCode)
+
+	var existing string
+	err := a.store.DB.QueryRow(
+		"SELECT invite_id FROM invites WHERE invite_code_hash = ? LIMIT 1",
+		codeHash,
+	).Scan(&existing)
+
+	if err == nil {
+		writeError(w, http.StatusConflict, "invite_exists", "invite code already exists")
+		return
+	}
+	if err != sql.ErrNoRows {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	inviteID := uuid.NewString()
+	now := db.NowUTC()
+
+	_, err = a.store.DB.Exec(
+		"INSERT INTO invites (invite_id, invite_code_hash, created_at) VALUES (?, ?, ?)",
+		inviteID,
+		codeHash,
+		now,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]string{
+		"invite_id":   inviteID,
+		"invite_code": req.InviteCode,
+		"created_at":  now,
 	})
 }
 

@@ -26,7 +26,7 @@ func main() {
 		log.Fatalf("seed dev invite: %v", err)
 	}
 
-	api := httpapi.New(store)
+	api := httpapi.New(store, cfg.DevInviteCode != "")
 
 	log.Printf("CarbonStackCypher listening on %s", cfg.Addr)
 	log.Printf("database: %s", cfg.DBPath)
