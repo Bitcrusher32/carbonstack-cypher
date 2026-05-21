@@ -1,28 +1,28 @@
-# OS/editor
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
+﻿# CarbonStackCypher local development artifacts
+cypher.db
+*.db
+*.db-shm
+*.db-wal
 
-# Logs/temp
+# Logs
 *.log
-tmp/
-temp/
 
-# Secrets
+# Environment / secrets
 .env
 .env.*
-*.key
 *.pem
+*.key
+*.crt
 *.p12
-*.pfx
-secrets/
-private/
-keys/
 
 # Build outputs
+cypher.exe
+bin/
 dist/
 build/
-out/
-target/
-node_modules/
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
