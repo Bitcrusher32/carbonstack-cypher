@@ -4,6 +4,16 @@ cypher.db
 *.db-shm
 *.db-wal
 
+# Accidental client/dev state artifacts
+.alice/
+.bob/
+.test-alice-*/
+.test-bob-*/
+.carbonstack-comms/
+*.state.json
+messages.jsonl
+trust.json
+
 # Logs
 *.log
 
