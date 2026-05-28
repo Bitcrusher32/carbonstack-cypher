@@ -1,144 +1,124 @@
 ﻿# CarbonStackCypher Data Model v0
 
-## Status
+Status: implemented development schema
+Component: CarbonStackCypher
+Maturity: experimental / pre-release
 
-Classification: PLANNED / NOT IMPLEMENTED
+This document describes the current SQLite data model used by CarbonStackCypher.
 
-This document defines the initial local/server-side data model for the Phase 1 relay skeleton.
+The schema is implemented for the current relay/server scaffold. It is not a production database contract. It may change before any stable release.
 
-## Design Principles
+## Design principles
 
-- Store opaque envelopes.
-- Do not store plaintext message bodies.
-- Keep schema simple enough for SQLite.
-- Use stable identifiers.
-- Avoid group complexity in v0.
-- Keep future migration to PostgreSQL possible.
+Cypher stores routing and opaque envelope data.
+
+Cypher does not store plaintext message bodies.
+
+Cypher does not decide trust.
+
+Cypher does not parse OpenMLS internals.
+
+Cypher currently supports SQLite for development and local smoke testing.
+
+## Migrations
+
+Current migrations:
+
+    migrations/001_init.sql
+    migrations/002_envelope_payload_metadata.sql
 
 ## Tables
 
 ### invites
 
-Purpose: allow private registration without open signup.
+Purpose: allow development invite/account creation without open signup.
 
-Fields:
+Core fields:
 
-- invite_id: TEXT PRIMARY KEY
-- invite_code_hash: TEXT NOT NULL
-- created_at: TEXT NOT NULL
-- claimed_at: TEXT NULL
-- claimed_by_account_id: TEXT NULL
-- disabled_at: TEXT NULL
+- `invite_id`
+- `invite_code_hash`
+- `created_at`
+- `claimed_at`
+- `claimed_by_account_id`
+- `disabled_at`
 
-Notes:
-
-- Store invite code hashes, not raw invite codes.
-- Phase 1 may use a simple hash scheme for development.
-- Production password/invite hashing must be revisited before security claims.
+Invite codes are not a production authentication system.
 
 ### accounts
 
-Purpose: represent a user/account namespace.
+Purpose: represent an account namespace.
 
-Fields:
+Core fields:
 
-- account_id: TEXT PRIMARY KEY
-- display_name: TEXT NOT NULL
-- created_at: TEXT NOT NULL
-- disabled_at: TEXT NULL
+- `account_id`
+- `display_name`
+- `created_at`
+- `disabled_at`
 
-Notes:
-
-- Display names are not trusted identity.
-- Account IDs are routing/accounting identifiers, not cryptographic identity.
+Display names are not trusted identity.
 
 ### devices
 
-Purpose: represent client device identities.
+Purpose: represent client devices under accounts.
 
-Fields:
+Core fields:
 
-- device_id: TEXT PRIMARY KEY
-- account_id: TEXT NOT NULL
-- device_label: TEXT NOT NULL
-- public_identity_key: TEXT NOT NULL
-- public_prekey_bundle: TEXT NULL
-- created_at: TEXT NOT NULL
-- revoked_at: TEXT NULL
+- `device_id`
+- `account_id`
+- `device_label`
+- `public_identity_key`
+- `public_prekey_bundle`
+- `created_at`
+- `revoked_at`
 
-Foreign keys:
-
-- account_id -> accounts.account_id
-
-Notes:
-
-- public_identity_key and public_prekey_bundle may be stub values in Phase 1.
-- Device key changes must become loud in later protocol phases.
+Device records are routing/accounting records in the current scaffold. They are not a complete production identity system.
 
 ### envelopes
 
-Purpose: store opaque message envelopes.
+Purpose: store opaque relay envelopes for recipient devices.
 
-Fields:
+Core fields:
 
-- envelope_id: TEXT PRIMARY KEY
-- sender_device_id: TEXT NOT NULL
-- recipient_device_id: TEXT NOT NULL
-- content_type: TEXT NOT NULL
-- protocol_version: TEXT NOT NULL
-- ciphertext_b64: TEXT NOT NULL
-- client_created_at: TEXT NULL
-- server_received_at: TEXT NOT NULL
-- delivery_state: TEXT NOT NULL
+- `envelope_id`
+- `sender_device_id`
+- `recipient_device_id`
+- `content_type`
+- `protocol_version`
+- `ciphertext_b64`
+- `payload_sha256`
+- `payload_size_bytes`
+- `client_created_at`
+- `server_received_at`
+- `delivery_state`
 
-Foreign keys:
+`ciphertext_b64` stores opaque payload bytes encoded as base64.
 
-- sender_device_id -> devices.device_id
-- recipient_device_id -> devices.device_id
+For OpenMLS relay artifacts, those bytes are sidecar artifact bytes. Cypher does not parse the MLS content.
 
-Allowed delivery_state values:
+`payload_sha256` is the lowercase SHA-256 digest of decoded `ciphertext_b64` bytes.
 
-- queued
-- delivered
-- acknowledged
-- expired
+`payload_size_bytes` is the decoded byte length of `ciphertext_b64`.
 
-Notes:
+Payload metadata is relay/debug/storage sanity metadata. It is not a trust root.
 
-- ciphertext_b64 is opaque to the server.
-- content_type describes envelope category, not plaintext contents.
-- Phase 1 content_type should stay narrow.
+## Delivery state
 
-### envelope_acks
+Current delivery state is minimal:
 
-Purpose: record receipt acknowledgement.
+- `queued`
+- acknowledged through the ack route after recipient-side consume succeeds in the current Comms proof.
 
-Fields:
+The current consume-then-ack rule is enforced by Comms tests, not by Cypher semantic knowledge of OpenMLS.
 
-- ack_id: TEXT PRIMARY KEY
-- envelope_id: TEXT NOT NULL
-- recipient_device_id: TEXT NOT NULL
-- acknowledged_at: TEXT NOT NULL
+## Security boundary
 
-Foreign keys:
+Cypher is hostile-server-aware in design direction, but the current implementation is not a complete hostile-server proof.
 
-- envelope_id -> envelopes.envelope_id
-- recipient_device_id -> devices.device_id
+Cypher does not provide:
 
-## Initial Content Types
-
-- carbonstack.message.text.stub.v0
-
-## Initial Protocol Versions
-
-- stub-v0
-
-## Known Limitations
-
-- Metadata privacy is not solved.
-- Auth model is incomplete.
-- No message expiration policy yet.
-- No group state.
-- No revocation propagation.
-- No replay resistance validated.
-- No cryptographic protocol validated.
+- plaintext access;
+- MLS semantic validation;
+- identity trust decisions;
+- local vault security;
+- production metadata privacy;
+- external audit or certification.

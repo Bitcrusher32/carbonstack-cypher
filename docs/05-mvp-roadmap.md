@@ -1,93 +1,63 @@
-﻿# MVP Roadmap
+﻿# CarbonStackCypher MVP Roadmap
 
-CarbonStackCypher should be built in narrow phases.
+Status: current development roadmap
+Component: CarbonStackCypher
+Maturity: experimental / pre-release
 
-## Phase 0 — Documentation
+## Current implemented base
 
-- architecture
-- envelope model
-- API surface
-- storage model
-- admin plane
-- hostile-server model
-- deployment model
+Cypher currently implements the relay/server scaffold needed by the CarbonStack experimental backbone:
 
-## Phase 1 — Minimal Relay
+- HTTP JSON server;
+- SQLite migrations;
+- development invite/account/device records;
+- opaque envelope submission;
+- recipient inbox listing;
+- envelope ack;
+- OpenMLS artifact content types;
+- payload metadata over decoded envelope bytes.
 
-Goals:
+## Current role
 
-- start server
-- health endpoint
-- invite-only registration
-- account records
-- device records
-- encrypted envelope submission
-- encrypted envelope retrieval
-- delivery acknowledgement
-- size limits
-- basic rate limits
-- no plaintext access
+Cypher is the relay/storage server.
 
-Non-goals:
+It does not handle plaintext.
 
-- group messaging
-- attachments
-- file storage
-- media handling
-- federation
-- bots
-- link previews
+It does not parse MLS internals.
 
-## Phase 2 — Hostile-Server Test Harness
+It does not decide trust.
 
-Goals:
+It does not provide production identity or authentication.
 
-- simulate dropped messages
-- simulate delayed messages
-- simulate reordered messages
-- simulate replay attempts
-- simulate stale key delivery
-- simulate revocation suppression
-- verify client warnings
+## Near-term work
 
-## Phase 3 — Admin Plane
+Near-term Cypher work should focus on:
 
-Goals:
+- inbox/ack semantics cleanup;
+- schema/API wording standardization;
+- stronger development runbooks;
+- clearer error contracts;
+- release-facing docs alignment with `carbonstack`;
+- avoiding production security claims.
 
-- hardware-key-friendly admin authentication path
-- invite management
-- account suspension
-- operational logs
-- audit logs
-- rate-limit configuration
+## Later work
 
-Admin plane must not expose plaintext.
+Later work may include:
 
-## Phase 4 — Group-Aware Server Support
+- deployment configuration;
+- stronger auth;
+- PostgreSQL planning;
+- hostile-server rollback/replay harnesses;
+- metadata minimization;
+- operational logging policy;
+- production migration strategy.
 
-Goals:
+## Nonclaims
 
-- group delivery fanout
-- group epoch routing metadata
-- revocation event propagation
-- membership event storage
-- append-only event research
+Cypher is not production-certified.
 
-Group truth remains client/protocol-owned.
+Cypher is not externally audited.
 
-## Phase 5 — Deployment Hardening
+Cypher is not a complete hostile-server-safe messaging server.
 
-Goals:
-
-- Docker or container deployment
-- reverse proxy guide
-- TLS guide
-- backup guide
-- restore guide
-- update guide
-- security changelog
-- instance lockdown procedure
-
-## Core Principle
-
-Ship the smallest hostile-server relay that lets CarbonStackComms prove the model.
+Cypher is one component in the current experimental CarbonStack backbone.

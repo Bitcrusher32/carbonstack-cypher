@@ -1,186 +1,148 @@
 ﻿# CarbonStackCypher API Contract v0
 
-## Status
+Status: implemented development API
+Component: CarbonStackCypher
+Maturity: experimental / pre-release
 
-Classification: PLANNED / NOT IMPLEMENTED
+This document describes the current HTTP JSON API used by CarbonStackCypher.
 
-This document defines the initial HTTP JSON API for the Phase 1 relay skeleton.
+The API is stable enough for the current CarbonStackComms smoke harness. It is not a stable public protocol.
 
-## API Principles
+## API principles
 
-- Keep the server dumb.
-- Treat envelope payloads as opaque.
-- Avoid plaintext message content.
-- Avoid group semantics in v0.
-- Prefer boring HTTP JSON for early testing.
-- Make CLI integration easy.
+Cypher should remain dumb.
 
-## Base Path
+It stores opaque envelopes.
 
-/v0
+It does not parse plaintext.
+
+It does not parse OpenMLS internals.
+
+It does not decide trust.
+
+It exposes boring HTTP JSON for early testing and dev harnesses.
+
+## Base path
+
+    /v0
 
 ## Health
 
-### GET /v0/health
+    GET /v0/health
 
-Response:
+Purpose: verify the server is running.
 
-```json
-{
-  "status": "ok",
-  "service": "carbonstack-cypher",
-  "api_version": "v0"
-}
-Invite Claim
-POST /v0/invites/claim
+Response shape:
 
-Purpose: claim an invite and create an account.
+    {
+      "status": "ok",
+      "service": "carbonstack-cypher",
+      "api_version": "v0"
+    }
 
-Request:
+## Invite claim
 
-{
-  "invite_code": "example-invite",
-  "display_name": "alice"
-}
+    POST /v0/invites/claim
 
-Response:
+Purpose: claim a development invite and create an account.
 
-{
-  "account_id": "uuid",
-  "created_at": "2026-05-21T00:00:00Z"
-}
+This is development scaffolding, not a production authentication system.
 
-Notes:
+## Device registration
 
-Phase 1 may return simple development auth material.
-Production auth must be redesigned before security claims.
-Device Registration
-POST /v0/devices/register
+    POST /v0/devices/register
 
 Purpose: register a device under an account.
 
-Request:
+Device records are routing/accounting records in the current scaffold. They are not a full production identity system.
 
-{
-  "account_id": "uuid",
-  "device_label": "alice-cli-1",
-  "public_identity_key": "stub-public-identity-key",
-  "public_prekey_bundle": "stub-prekey-bundle"
-}
+## Device lookup
 
-Response:
-
-{
-  "device_id": "uuid",
-  "account_id": "uuid",
-  "created_at": "2026-05-21T00:00:00Z"
-}
-Device Lookup
-GET /v0/accounts/{account_id}/devices
+    GET /v0/accounts/{account_id}/devices
 
 Purpose: list non-revoked devices for an account.
 
-Response:
+## Envelope submit
 
-{
-  "account_id": "uuid",
-  "devices": [
-    {
-      "device_id": "uuid",
-      "device_label": "alice-cli-1",
-      "public_identity_key": "stub-public-identity-key",
-      "public_prekey_bundle": "stub-prekey-bundle",
-      "created_at": "2026-05-21T00:00:00Z"
-    }
-  ]
-}
-Submit Envelope
-POST /v0/envelopes
+    POST /v0/envelopes
 
-Purpose: submit an opaque envelope for delivery.
+Purpose: submit an opaque envelope for a recipient device.
 
-Request:
+Core request fields:
 
-{
-  "sender_device_id": "uuid",
-  "recipient_device_id": "uuid",
-  "content_type": "carbonstack.message.text.stub.v0",
-  "protocol_version": "stub-v0",
-  "ciphertext_b64": "YmFzZTY0LXN0dWItY2lwaGVydGV4dA==",
-  "client_created_at": "2026-05-21T00:00:00Z"
-}
+- `sender_device_id`
+- `recipient_device_id`
+- `content_type`
+- `protocol_version`
+- `ciphertext_b64`
+- `client_created_at`
 
-Response:
+Current accepted OpenMLS content types:
 
-{
-  "envelope_id": "uuid",
-  "delivery_state": "queued",
-  "server_received_at": "2026-05-21T00:00:00Z"
-}
+    carbonstack.mls.keypackage.v0
+    carbonstack.mls.welcome.v0
+    carbonstack.mls.application-message.v0
 
-Server requirements:
+Current OpenMLS protocol version:
 
-Do not parse ciphertext.
-Do not require plaintext.
-Validate size limits.
-Validate required routing fields.
-Reject unknown content_type values unless explicitly allowed.
-Retrieve Envelopes
-GET /v0/devices/{device_id}/envelopes
+    carbonstack-openmls-sidecar-v0
 
-Purpose: retrieve queued envelopes for a recipient device.
+Existing stub content type:
 
-Response:
+    carbonstack.message.text.stub.v0
 
-{
-  "device_id": "uuid",
-  "envelopes": [
-    {
-      "envelope_id": "uuid",
-      "sender_device_id": "uuid",
-      "recipient_device_id": "uuid",
-      "content_type": "carbonstack.message.text.stub.v0",
-      "protocol_version": "stub-v0",
-      "ciphertext_b64": "YmFzZTY0LXN0dWItY2lwaGVydGV4dA==",
-      "client_created_at": "2026-05-21T00:00:00Z",
-      "server_received_at": "2026-05-21T00:00:00Z",
-      "delivery_state": "queued"
-    }
-  ]
-}
-Acknowledge Envelope
-POST /v0/envelopes/{envelope_id}/ack
+Existing stub protocol version:
 
-Purpose: mark an envelope as acknowledged by recipient device.
+    stub-v0
 
-Request:
+Submit response includes:
 
-{
-  "recipient_device_id": "uuid"
-}
+- `envelope_id`
+- `delivery_state`
+- `server_received_at`
+- `payload_sha256`
+- `payload_size_bytes`
 
-Response:
+`payload_sha256` and `payload_size_bytes` are computed by the server from decoded `ciphertext_b64` bytes.
 
-{
-  "envelope_id": "uuid",
-  "delivery_state": "acknowledged",
-  "acknowledged_at": "2026-05-21T00:00:00Z"
-}
-Error Shape
+## Inbox list
 
-All errors should use:
+    GET /v0/devices/{device_id}/envelopes
 
-{
-  "error": {
-    "code": "invalid_request",
-    "message": "Human-readable development message"
-  }
-}
-Known Security Limitations
-No production authentication yet.
-No final cryptographic protocol.
-No replay protection validated.
-No hostile-server proof beyond envelope opacity.
-No metadata privacy.
-No rate limiting yet.
-No abuse resistance yet.
+Purpose: list queued envelopes for a recipient device.
+
+Envelope records include:
+
+- `envelope_id`
+- `sender_device_id`
+- `recipient_device_id`
+- `content_type`
+- `protocol_version`
+- `ciphertext_b64`
+- `payload_sha256`
+- `payload_size_bytes`
+- `client_created_at`
+- `server_received_at`
+- `delivery_state`
+
+## Ack
+
+    POST /v0/envelopes/{envelope_id}/ack
+
+Purpose: mark an envelope handled.
+
+In the current Comms proof, ack occurs only after recipient-side OpenMLS sidecar consume succeeds.
+
+Cypher itself does not know OpenMLS consume state. It only records the ack request.
+
+## Security boundary
+
+This API does not prove:
+
+- production E2EE;
+- hostile-server safety;
+- metadata privacy;
+- secure identity;
+- secure local vault/storage;
+- stable public protocol status;
+- external audit or certification.
