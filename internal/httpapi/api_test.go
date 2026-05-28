@@ -2,7 +2,9 @@ package httpapi_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -331,6 +333,19 @@ func ackEnvelope(t *testing.T, serverURL string, envelopeID string, recipientDev
 
 	doPost(t, serverURL+"/v0/envelopes/"+envelopeID+"/ack", body, http.StatusOK, &resp)
 	return resp
+}
+
+func assertPayloadMetadata(t *testing.T, gotSHA256 string, gotSizeBytes int64, payload []byte) {
+	t.Helper()
+
+	hash := sha256.Sum256(payload)
+	wantSHA256 := hex.EncodeToString(hash[:])
+	if gotSHA256 != wantSHA256 {
+		t.Fatalf("payload_sha256 = %q, want %q", gotSHA256, wantSHA256)
+	}
+	if gotSizeBytes != int64(len(payload)) {
+		t.Fatalf("payload_size_bytes = %d, want %d", gotSizeBytes, len(payload))
+	}
 }
 
 func doPost(t *testing.T, url string, body any, expectedStatus int, out any) {

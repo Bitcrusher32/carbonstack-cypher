@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -347,11 +349,15 @@ func (a *API) submitEnvelope(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "envelope_too_large", "ciphertext_b64 exceeds Phase 1 limit")
 		return
 	}
-
-	if _, err := base64.StdEncoding.DecodeString(req.CiphertextB64); err != nil {
+	decodedPayload, err := base64.StdEncoding.DecodeString(req.CiphertextB64)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_ciphertext", "ciphertext_b64 must be valid base64")
 		return
 	}
+
+	payloadHash := sha256.Sum256(decodedPayload)
+	payloadSHA256 := hex.EncodeToString(payloadHash[:])
+	payloadSizeBytes := len(decodedPayload)
 
 	if !a.deviceExists(req.SenderDeviceID) {
 		writeError(w, http.StatusNotFound, "sender_device_not_found", "sender device not found")
@@ -365,15 +371,16 @@ func (a *API) submitEnvelope(w http.ResponseWriter, r *http.Request) {
 
 	envelopeID := uuid.NewString()
 	now := db.NowUTC()
-
-	_, err := a.store.DB.Exec(
-		"INSERT INTO envelopes (envelope_id, sender_device_id, recipient_device_id, content_type, protocol_version, ciphertext_b64, client_created_at, server_received_at, delivery_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+	_, err = a.store.DB.Exec(
+		"INSERT INTO envelopes (envelope_id, sender_device_id, recipient_device_id, content_type, protocol_version, ciphertext_b64, payload_sha256, payload_size_bytes, client_created_at, server_received_at, delivery_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		envelopeID,
 		req.SenderDeviceID,
 		req.RecipientDeviceID,
 		req.ContentType,
 		req.ProtocolVersion,
 		req.CiphertextB64,
+		payloadSHA256,
+		payloadSizeBytes,
 		req.ClientCreatedAt,
 		now,
 		"queued",
@@ -382,11 +389,12 @@ func (a *API) submitEnvelope(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
 		return
 	}
-
-	writeJSON(w, http.StatusCreated, map[string]string{
+	writeJSON(w, http.StatusCreated, map[string]any{
 		"envelope_id":        envelopeID,
 		"delivery_state":     "queued",
 		"server_received_at": now,
+		"payload_sha256":     payloadSHA256,
+		"payload_size_bytes": payloadSizeBytes,
 	})
 }
 
@@ -403,7 +411,7 @@ func (a *API) deviceEnvelopes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := a.store.DB.Query(
-		"SELECT envelope_id, sender_device_id, recipient_device_id, content_type, protocol_version, ciphertext_b64, COALESCE(client_created_at, ''), server_received_at, delivery_state FROM envelopes WHERE recipient_device_id = ? AND delivery_state = 'queued' ORDER BY server_received_at ASC",
+		"SELECT envelope_id, sender_device_id, recipient_device_id, content_type, protocol_version, ciphertext_b64, COALESCE(payload_sha256, ''), COALESCE(payload_size_bytes, 0), COALESCE(client_created_at, ''), server_received_at, delivery_state FROM envelopes WHERE recipient_device_id = ? AND delivery_state = 'queued' ORDER BY server_received_at ASC",
 		deviceID,
 	)
 	if err != nil {
@@ -419,6 +427,8 @@ func (a *API) deviceEnvelopes(w http.ResponseWriter, r *http.Request) {
 		ContentType       string `json:"content_type"`
 		ProtocolVersion   string `json:"protocol_version"`
 		CiphertextB64     string `json:"ciphertext_b64"`
+		PayloadSHA256     string `json:"payload_sha256"`
+		PayloadSizeBytes  int64  `json:"payload_size_bytes"`
 		ClientCreatedAt   string `json:"client_created_at"`
 		ServerReceivedAt  string `json:"server_received_at"`
 		DeliveryState     string `json:"delivery_state"`
@@ -441,6 +451,8 @@ func (a *API) deviceEnvelopes(w http.ResponseWriter, r *http.Request) {
 			&e.ContentType,
 			&e.ProtocolVersion,
 			&e.CiphertextB64,
+			&e.PayloadSHA256,
+			&e.PayloadSizeBytes,
 			&e.ClientCreatedAt,
 			&e.ServerReceivedAt,
 			&e.DeliveryState,
