@@ -12,6 +12,15 @@ import (
 	"git.bitcrusher32.win/bitcrusher32/carbonstack-cypher/internal/db"
 )
 
+const (
+	contentTypeMessageTextStub    = "carbonstack.message.text.stub.v0"
+	contentTypeMLSKeyPackage      = "carbonstack.mls.keypackage.v0"
+	contentTypeMLSWelcome         = "carbonstack.mls.welcome.v0"
+	contentTypeMLSApplicationMsg  = "carbonstack.mls.application-message.v0"
+	protocolVersionStubV0         = "stub-v0"
+	protocolVersionOpenMLSSidecar = "carbonstack-openmls-sidecar-v0"
+)
+
 type API struct {
 	store   *db.Store
 	devMode bool
@@ -324,13 +333,12 @@ func (a *API) submitEnvelope(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "sender_device_id, recipient_device_id, content_type, protocol_version, and ciphertext_b64 are required")
 		return
 	}
-
-	if req.ContentType != "carbonstack.message.text.stub.v0" {
+	if !isSupportedContentType(req.ContentType) {
 		writeError(w, http.StatusBadRequest, "unsupported_content_type", "unsupported content_type")
 		return
 	}
 
-	if req.ProtocolVersion != "stub-v0" {
+	if !isSupportedProtocolForContentType(req.ContentType, req.ProtocolVersion) {
 		writeError(w, http.StatusBadRequest, "unsupported_protocol_version", "unsupported protocol_version")
 		return
 	}
@@ -526,6 +534,29 @@ func (a *API) ackEnvelope(w http.ResponseWriter, r *http.Request) {
 		"delivery_state":  "acknowledged",
 		"acknowledged_at": now,
 	})
+}
+
+func isSupportedContentType(contentType string) bool {
+	switch contentType {
+	case contentTypeMessageTextStub,
+		contentTypeMLSKeyPackage,
+		contentTypeMLSWelcome,
+		contentTypeMLSApplicationMsg:
+		return true
+	default:
+		return false
+	}
+}
+
+func isSupportedProtocolForContentType(contentType string, protocolVersion string) bool {
+	switch contentType {
+	case contentTypeMessageTextStub:
+		return protocolVersion == protocolVersionStubV0
+	case contentTypeMLSKeyPackage, contentTypeMLSWelcome, contentTypeMLSApplicationMsg:
+		return protocolVersion == protocolVersionOpenMLSSidecar
+	default:
+		return false
+	}
 }
 
 func (a *API) deviceExists(deviceID string) bool {
