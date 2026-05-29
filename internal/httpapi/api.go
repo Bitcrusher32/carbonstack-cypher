@@ -489,10 +489,13 @@ func (a *API) ackEnvelope(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var actualRecipient string
+	var deliveryState string
+	var existingAcknowledgedAt string
+
 	err := a.store.DB.QueryRow(
-		"SELECT recipient_device_id FROM envelopes WHERE envelope_id = ?",
+		"SELECT e.recipient_device_id, e.delivery_state, COALESCE((SELECT acknowledged_at FROM envelope_acks WHERE envelope_id = e.envelope_id AND recipient_device_id = e.recipient_device_id ORDER BY acknowledged_at ASC LIMIT 1), '') FROM envelopes e WHERE e.envelope_id = ?",
 		envelopeID,
-	).Scan(&actualRecipient)
+	).Scan(&actualRecipient, &deliveryState, &existingAcknowledgedAt)
 
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, "envelope_not_found", "envelope not found")
@@ -507,6 +510,15 @@ func (a *API) ackEnvelope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if deliveryState == "acknowledged" && existingAcknowledgedAt != "" {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"envelope_id":     envelopeID,
+			"delivery_state":  "acknowledged",
+			"acknowledged_at": existingAcknowledgedAt,
+		})
+		return
+	}
+
 	ackID := uuid.NewString()
 	now := db.NowUTC()
 
@@ -517,15 +529,19 @@ func (a *API) ackEnvelope(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(
-		"INSERT INTO envelope_acks (ack_id, envelope_id, recipient_device_id, acknowledged_at) VALUES (?, ?, ?, ?)",
-		ackID,
-		envelopeID,
-		req.RecipientDeviceID,
-		now,
-	); err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
-		return
+	if existingAcknowledgedAt == "" {
+		if _, err := tx.Exec(
+			"INSERT INTO envelope_acks (ack_id, envelope_id, recipient_device_id, acknowledged_at) VALUES (?, ?, ?, ?)",
+			ackID,
+			envelopeID,
+			req.RecipientDeviceID,
+			now,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+			return
+		}
+	} else {
+		now = existingAcknowledgedAt
 	}
 
 	if _, err := tx.Exec(

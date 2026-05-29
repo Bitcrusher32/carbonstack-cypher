@@ -103,12 +103,32 @@ Payload metadata is relay/debug/storage sanity metadata. It is not a trust root.
 
 ## Delivery state
 
-Current delivery state is minimal:
+Current delivery states:
 
 - `queued`
-- acknowledged through the ack route after recipient-side consume succeeds in the current Comms proof.
+- `acknowledged`
 
-The current consume-then-ack rule is enforced by Comms tests, not by Cypher semantic knowledge of OpenMLS.
+`queued` means the envelope is available through the recipient inbox route.
+
+`acknowledged` means Cypher accepted a recipient-device ack for the envelope.
+
+Inbox returns queued envelopes only.
+
+## Ack semantics
+
+Ack is idempotent for the same recipient.
+
+First correct-recipient ack records an ack event and marks the envelope acknowledged.
+
+Repeated correct-recipient ack returns acknowledged without creating a new semantic state.
+
+Wrong-recipient ack is rejected.
+
+Unknown-envelope ack is rejected.
+
+Missing-recipient ack is rejected.
+
+The current consume-then-ack rule is enforced by Comms tests and harness behavior. Cypher does not know OpenMLS sidecar consume state.
 
 ## Security boundary
 
@@ -122,3 +142,4 @@ Cypher does not provide:
 - local vault security;
 - production metadata privacy;
 - external audit or certification.
+

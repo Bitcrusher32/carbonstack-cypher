@@ -1,129 +1,106 @@
-﻿# Storage Model
+﻿# CarbonStackCypher Storage Model
 
-CarbonStackCypher storage exists to route encrypted envelopes and operate the instance.
+Status: current development storage model
+Component: CarbonStackCypher
+Maturity: experimental / pre-release
 
-It must not become a plaintext archive, identity oracle, or hidden recovery service.
+Cypher storage exists to route opaque envelopes and operate the development server.
 
-## MVP Storage Objects
+It must not become a plaintext archive.
 
-### Account Record
+It must not become an identity oracle.
 
-May contain:
+It must not become a hidden recovery service.
 
-- account identifier
-- registration state
-- invite reference
-- account status
-- creation time
-- basic abuse-control metadata
+## Current storage backend
 
-Must not contain:
+Current backend:
 
-- message plaintext
-- user private keys
-- local vault recovery secrets
+    SQLite
 
-### Device Record
+Current use:
 
-May contain:
+- development server;
+- local smoke tests;
+- experimental backbone validation.
 
-- device identifier
-- account identifier
-- public identity material
-- public prekey material where protocol requires it
-- device status
-- revocation state
-- last seen time
-- registration time
+The current schema is not a production database contract.
 
-Must not contain:
+## Current migrations
 
-- device private keys
-- local vault keys
-- message plaintext
+Current migrations:
 
-### Envelope Record
+    migrations/001_init.sql
+    migrations/002_envelope_payload_metadata.sql
 
-May contain:
+## Current tables
 
-- envelope identifier
-- routing metadata
-- protocol version
-- message type
-- ciphertext
-- delivery state
-- server timestamps
-- expiry policy
+### invites
 
-Must not contain:
+Development invite records.
 
-- plaintext body
-- plaintext subject
-- plaintext attachment
-- rendered preview
+Not a production authentication system.
 
-### Invite Record
+### accounts
 
-May contain:
+Development account namespace records.
 
-- invite identifier
-- invite status
-- creation time
-- expiry time
-- redemption state
-- admin creator reference
+Display names are not trusted identity.
 
-### Audit Log Record
+### devices
 
-May contain:
+Device routing/accounting records.
 
-- admin action
-- timestamp
-- actor
-- target object
-- result
-- reason code
+They carry public identity/prekey material for the current scaffold.
 
-Audit logs should avoid storing sensitive plaintext.
+They do not carry private keys.
 
-## Retention
+### envelopes
 
-CarbonStackCypher should support narrow retention policies.
+Opaque relay envelope records.
 
-Possible retention behavior:
+Current envelope fields include:
 
-- delete delivered envelopes after acknowledgement
-- expire undelivered envelopes after configured time
-- retain audit logs separately
-- avoid indefinite message queue storage by default
+- envelope ID;
+- sender device ID;
+- recipient device ID;
+- content type;
+- protocol version;
+- base64 payload;
+- payload SHA-256;
+- payload decoded size;
+- client/server timestamps;
+- delivery state.
 
-## Database Dump Assumption
+The payload is not plaintext.
 
-A database dump should reveal operational metadata but not message contents.
+Cypher does not parse OpenMLS internals.
 
-CarbonStack does not initially claim strong metadata privacy.
+### envelope_acks
 
-## Backups
+Ack records.
 
-Server backups must be treated as sensitive.
+Current ack semantics:
 
-Backups should not include plaintext messages because the server should never have them.
+- same-recipient ack is idempotent at the API layer;
+- wrong-recipient ack is rejected;
+- ack sets the envelope delivery state to `acknowledged`;
+- inbox returns queued envelopes only.
 
-Backups may include:
+Ack records are server records of a recipient-device ack request. They are not proof that Cypher independently verified sidecar consume.
 
-- encrypted envelopes
-- account metadata
-- device public material
-- invites
-- audit logs
-- instance configuration
+## Retention direction
 
-Backups must not include:
+Future retention policy may delete acknowledged envelopes or expire old queued envelopes.
 
-- client private keys
-- user vault keys
-- message plaintext
+That is not the current production behavior.
 
-## Core Principle
+## Nonclaims
 
-Server storage should be useful for delivery and useless for reading.
+Current storage does not prove:
+
+- production metadata privacy;
+- production vault security;
+- hostile-server completeness;
+- secure identity;
+- external audit or certification.

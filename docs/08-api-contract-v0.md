@@ -129,11 +129,25 @@ Envelope records include:
 
     POST /v0/envelopes/{envelope_id}/ack
 
-Purpose: mark an envelope handled.
+Purpose: mark an envelope handled for the recipient device.
+
+Request field:
+
+- `recipient_device_id`
+
+Current behavior:
+
+- requires `recipient_device_id`;
+- rejects unknown envelopes;
+- rejects wrong-recipient ack;
+- is idempotent for the correct recipient;
+- sets or returns `delivery_state = acknowledged`.
+
+Ack is idempotent so client retries can safely repeat after a lost HTTP response.
 
 In the current Comms proof, ack occurs only after recipient-side OpenMLS sidecar consume succeeds.
 
-Cypher itself does not know OpenMLS consume state. It only records the ack request.
+Cypher itself does not know OpenMLS consume state. It records the ack request and delivery state.
 
 ## Security boundary
 
@@ -146,3 +160,4 @@ This API does not prove:
 - secure local vault/storage;
 - stable public protocol status;
 - external audit or certification.
+

@@ -1,124 +1,104 @@
-﻿# Envelope Model
+﻿# CarbonStackCypher Envelope Model
 
-CarbonStackCypher stores and routes encrypted envelopes.
+Status: current conceptual model
+Component: CarbonStackCypher
+Maturity: experimental / pre-release
 
-The envelope model defines what the server can see, what it must not see, and what clients must validate.
+Cypher stores and routes opaque envelopes.
 
-## Envelope Goals
+It does not handle plaintext.
 
-Encrypted envelopes should support:
+It does not parse OpenMLS internals.
 
-- routing
-- delivery
-- replay detection support
-- version negotiation
-- future group support
-- future revocation propagation
-- hostile-server testing
+It does not decide trust.
 
-Encrypted envelopes should avoid:
+## Current envelope shape
 
-- plaintext message content
-- rich content processing
-- server-parsed message bodies
-- server-generated previews
-- server-trusted identity changes
+Current envelope records carry:
 
-## MVP Envelope Fields
+- `envelope_id`
+- `sender_device_id`
+- `recipient_device_id`
+- `content_type`
+- `protocol_version`
+- `ciphertext_b64`
+- `payload_sha256`
+- `payload_size_bytes`
+- `client_created_at`
+- `server_received_at`
+- `delivery_state`
 
-A minimal server-visible envelope may include:
+`ciphertext_b64` is the stored opaque payload encoded as base64.
 
-- envelope_id
-- protocol_version
-- sender_account_id or sender_device_id
-- recipient_account_id or recipient_device_id
-- conversation_id
-- message_type
-- created_at_server
-- received_at_server
-- delivery_state
-- ciphertext
-- ciphertext_length
-- client_supplied_nonce_or_message_id where protocol requires it
+For OpenMLS relay artifacts, this name is historical and imperfect. The payload may be a KeyPackage artifact, Welcome artifact, or application-message artifact.
 
-The exact field names are future implementation details.
+## Content type
 
-## Future Group-Aware Fields
+Current OpenMLS relay content types:
 
-Future group support may require:
+    carbonstack.mls.keypackage.v0
+    carbonstack.mls.welcome.v0
+    carbonstack.mls.application-message.v0
 
-- group_id
-- group_epoch
-- sender_device_id
-- membership_event_reference
-- revocation_event_reference
-- sequence or ordering hint
-- server-visible delivery fanout state
+Existing stub content type:
 
-Group metadata should be minimized where possible.
+    carbonstack.message.text.stub.v0
 
-The server must not become the authority on group truth.
+The content type helps the client and server agree on the envelope family. It does not prove payload authenticity or semantic validity.
 
-## Payload Boundary
+## Protocol version
 
-CarbonStackCypher must treat ciphertext as opaque.
+Current OpenMLS relay protocol version:
 
-It must not:
+    carbonstack-openmls-sidecar-v0
 
-- parse plaintext
-- inspect message bodies
-- generate previews
-- scan links
-- scan attachments
-- mutate payload content
-- normalize text
-- validate user text
-- render content
+Existing stub protocol version:
 
-Text validation belongs to CarbonStackComms.
+    stub-v0
 
-## Server-Side Validation
+The OpenMLS relay protocol version is a CarbonStack compatibility label. It is not a claim of generic OpenMLS standard compatibility.
 
-CarbonStackCypher may validate:
+## Payload metadata
 
-- envelope size limits
-- required routing fields
-- known protocol version ranges
-- rate limits
-- account/device existence
-- invite or registration state
-- abuse-control metadata
+Cypher computes:
 
-CarbonStackCypher must not require plaintext access to perform validation.
+    payload_sha256
+    payload_size_bytes
 
-## Message Types
+Both describe decoded `ciphertext_b64` bytes.
 
-Potential server-visible message types:
+Payload metadata is relay/debug/storage sanity metadata.
 
-- encrypted_text
-- trust_event
-- device_revocation
-- delivery_ack
-- group_epoch_event
-- protocol_control
+It is not a trust root.
 
-Message type visibility should be minimized and revisited during protocol design.
+A malicious server can lie about server-returned metadata.
 
-## Rejection Behavior
+OpenMLS sidecar consume remains the cryptographic validity gate.
 
-The server may reject envelopes that are:
+## Delivery state
 
-- oversized
-- malformed at envelope layer
-- from suspended accounts
-- from revoked devices
-- above rate limits
-- using unsupported protocol versions
+Current delivery states:
 
-The server should not reject based on plaintext content because it must not know plaintext content.
+    queued
+    acknowledged
 
-## Core Principle
+`queued` means the envelope is available through the recipient inbox route.
 
-The server routes envelopes.
+`acknowledged` means Cypher accepted a recipient-device ack for the envelope.
 
-The client owns meaning.
+Cypher does not know whether the sidecar consumed the artifact. Comms decides when to ack.
+
+## Payload boundary
+
+Cypher must not:
+
+- parse plaintext;
+- parse MLS internals;
+- generate previews;
+- scan links;
+- scan attachments;
+- mutate payload content;
+- normalize text;
+- decide identity trust.
+
+The server-visible envelope exists for routing and storage, not content authority.

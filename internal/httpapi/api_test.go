@@ -112,6 +112,72 @@ func TestFullRelayLifecycle(t *testing.T) {
 	}
 }
 
+func TestAckIsIdempotentForRecipient(t *testing.T) {
+	server := newTestServer(t)
+	defer server.Close()
+
+	alice := claimInvite(t, server.URL, "dev-invite", "alice-test")
+	createDevInvite(t, server.URL, "bob-test-invite")
+	bob := claimInvite(t, server.URL, "bob-test-invite", "bob-test")
+
+	aliceDevice := registerDevice(t, server.URL, alice.AccountID, "alice-cli-test", "stub-alice-public-key", "stub-alice-prekey")
+	bobDevice := registerDevice(t, server.URL, bob.AccountID, "bob-cli-test", "stub-bob-public-key", "stub-bob-prekey")
+
+	ciphertextB64 := base64.StdEncoding.EncodeToString([]byte("idempotent ack test"))
+	envelope := submitEnvelope(t, server.URL, aliceDevice.DeviceID, bobDevice.DeviceID, ciphertextB64)
+
+	firstAck := ackEnvelope(t, server.URL, envelope.EnvelopeID, bobDevice.DeviceID)
+	if firstAck.DeliveryState != "acknowledged" {
+		t.Fatalf("first ack delivery_state = %q, want acknowledged", firstAck.DeliveryState)
+	}
+	if firstAck.AcknowledgedAt == "" {
+		t.Fatal("first ack acknowledged_at is empty")
+	}
+
+	secondAck := ackEnvelope(t, server.URL, envelope.EnvelopeID, bobDevice.DeviceID)
+	if secondAck.DeliveryState != "acknowledged" {
+		t.Fatalf("second ack delivery_state = %q, want acknowledged", secondAck.DeliveryState)
+	}
+	if secondAck.AcknowledgedAt != firstAck.AcknowledgedAt {
+		t.Fatalf("second ack acknowledged_at = %q, want original %q", secondAck.AcknowledgedAt, firstAck.AcknowledgedAt)
+	}
+
+	inboxAfterAck := getInbox(t, server.URL, bobDevice.DeviceID)
+	if len(inboxAfterAck.Envelopes) != 0 {
+		t.Fatalf("expected empty inbox after idempotent ack, got %d envelopes", len(inboxAfterAck.Envelopes))
+	}
+}
+
+func TestAckRejectsUnknownEnvelope(t *testing.T) {
+	server := newTestServer(t)
+	defer server.Close()
+
+	alice := claimInvite(t, server.URL, "dev-invite", "alice-test")
+	aliceDevice := registerDevice(t, server.URL, alice.AccountID, "alice-cli-test", "stub-alice-public-key", "stub-alice-prekey")
+
+	body := map[string]string{
+		"recipient_device_id": aliceDevice.DeviceID,
+	}
+
+	var errResp errorResponse
+	doPost(t, server.URL+"/v0/envelopes/not-a-real-envelope/ack", body, http.StatusNotFound, &errResp)
+
+	if errResp.Error.Code != "envelope_not_found" {
+		t.Fatalf("expected envelope_not_found, got %q", errResp.Error.Code)
+	}
+}
+
+func TestAckRequiresRecipientDeviceID(t *testing.T) {
+	server := newTestServer(t)
+	defer server.Close()
+
+	var errResp errorResponse
+	doPost(t, server.URL+"/v0/envelopes/not-a-real-envelope/ack", map[string]string{}, http.StatusBadRequest, &errResp)
+
+	if errResp.Error.Code != "invalid_request" {
+		t.Fatalf("expected invalid_request, got %q", errResp.Error.Code)
+	}
+}
 func TestAckRejectsWrongRecipient(t *testing.T) {
 	server := newTestServer(t)
 	defer server.Close()

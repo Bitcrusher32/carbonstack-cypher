@@ -1,141 +1,110 @@
-﻿# API Surface
+﻿# CarbonStackCypher API Surface
 
-CarbonStackCypher should expose a narrow API surface.
+Status: current development API surface
+Component: CarbonStackCypher
+Maturity: experimental / pre-release
 
-The API should support encrypted envelope routing, device registration, invite flows, revocation propagation, and administrative instance management.
+Cypher exposes a narrow HTTP JSON API for development relay testing.
 
-It should not expose broad content, media, preview, or filesystem functionality.
+It is not a stable public protocol.
 
-## MVP API Categories
+It is not a production deployment surface.
 
-### Health
+## Current routes
 
-Purpose:
+    GET  /v0/health
+    POST /v0/dev/invites
+    POST /v0/invites/claim
+    POST /v0/devices/register
+    GET  /v0/accounts/{account_id}/devices
+    POST /v0/envelopes
+    GET  /v0/devices/{device_id}/envelopes
+    POST /v0/envelopes/{envelope_id}/ack
 
-- service health
-- version reporting
-- basic compatibility checks
-
-Example operations:
-
-- get server status
-- get supported protocol versions
-- get instance policy
-
-### Registration
-
-Purpose:
-
-- invite-only account creation
-- device enrollment
-
-Example operations:
-
-- redeem invite
-- register account
-- register first device
-- publish device public material
-- fetch own device state
-
-### Device Directory
+## Health
 
 Purpose:
 
-- allow clients to retrieve public device material needed for session setup
+- confirm the server is running;
+- expose basic service/API version status.
 
-Example operations:
-
-- fetch device public bundle
-- fetch contact device list
-- fetch revocation status
-- fetch key-change state where supported
-
-The server must not be trusted as the final authority for identity.
-
-### Envelope Submission
+## Development invite/account/device routes
 
 Purpose:
 
-- submit encrypted message envelopes
+- support local development account setup;
+- support test and smoke-harness device registration.
 
-Example operations:
+These routes are development scaffolding. They are not production authentication.
 
-- submit encrypted envelope
-- submit delivery acknowledgement
-- submit revocation event
-- submit trust event where protocol permits
+## Envelope submit
 
-### Envelope Retrieval
+Route:
 
-Purpose:
-
-- retrieve queued encrypted envelopes
-
-Example operations:
-
-- fetch pending envelopes
-- acknowledge envelope receipt
-- delete delivered envelope if policy allows
-- retrieve delivery state
-
-### Admin
+    POST /v0/envelopes
 
 Purpose:
 
-- instance management
+- accept an opaque payload for a recipient device;
+- validate content type and protocol version compatibility;
+- validate base64 payload form;
+- compute payload metadata;
+- store the envelope as `queued`.
 
-Example operations:
+Submit does not prove OpenMLS semantic validity.
 
-- create invite
-- revoke invite
-- suspend account
-- view operational metrics
-- view audit logs
-- configure rate limits
-- rotate server operational secrets
+Submit does not prove delivery.
 
-Admin operations must not expose plaintext or client private keys.
+## Inbox
 
-## Explicitly Excluded API Categories
+Route:
 
-CarbonStackCypher should not expose:
+    GET /v0/devices/{device_id}/envelopes
 
-- link preview API
-- media transcoding API
-- file conversion API
-- attachment scanning API
-- browser rendering API
-- cloud backup plaintext API
-- password-based message recovery API
-- arbitrary plugin API
-- arbitrary webhook execution
-- general bot framework
+Purpose:
 
-## API Security Requirements
+- return queued envelopes for the recipient device.
 
-The API should use:
+Current inbox behavior:
 
-- TLS
-- authenticated client requests
-- rate limiting
-- narrow request schemas
-- strict size limits
-- structured audit logs
-- clear error categories
-- safe failure defaults
+    returns delivery_state = queued envelopes only.
 
-## Error Behavior
+It does not return acknowledged envelopes.
 
-Errors should not leak sensitive state unnecessarily.
+Inbox retrieval is not ack.
 
-The API should avoid revealing:
+Inbox retrieval is not sidecar consume.
 
-- whether a specific person is registered, where possible
-- detailed trust state to unauthorized clients
-- operational internals
-- database structure
-- secret material
+## Ack
 
-## Core Principle
+Route:
 
-The API should be boring, narrow, explicit, and hostile to feature creep.
+    POST /v0/envelopes/{envelope_id}/ack
+
+Purpose:
+
+- mark an envelope handled for the recipient device.
+
+Current ack behavior:
+
+- requires `recipient_device_id`;
+- rejects unknown envelopes;
+- rejects wrong-recipient ack;
+- is idempotent for the correct recipient;
+- sets or returns `delivery_state = acknowledged`.
+
+Ack is not proof of OpenMLS consume by itself.
+
+In the current CarbonStackComms proof, Comms sends ack only after the relevant sidecar consume command succeeds.
+
+## Nonclaims
+
+This API does not prove:
+
+- production E2EE;
+- hostile-server safety;
+- metadata privacy;
+- secure identity;
+- secure local vault/storage;
+- Android readiness;
+- external audit or certification.
