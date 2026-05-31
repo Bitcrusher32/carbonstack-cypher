@@ -2,17 +2,12 @@
 
 CarbonStackCypher is the experimental relay/storage server for CarbonStack.
 
-It stores opaque envelopes.
-
-It does not handle plaintext.
-
-It does not decide trust.
-
-It is not production-certified.
-
-It is not externally audited.
+**It stores opaque envelopes, is not externally audited, does not handle plaintext, does not decide trust, is not production-certified.**
 
 The current validated role of Cypher is to relay CarbonStackComms/OpenMLS sidecar artifacts through a simple HTTP JSON envelope API.
+
+_Related repositories: [carbonstack](https://git.bitcrusher32.win/bitcrusher32/carbonstack) / [carbonstack-comms](https://git.bitcrusher32.win/bitcrusher32/carbonstack-comms) / [carbonstack-os](https://git.bitcrusher32.win/bitcrusher32/carbonstack-os)_
+
 
 ## Current implemented behavior
 
