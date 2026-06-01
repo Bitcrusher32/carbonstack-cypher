@@ -99,3 +99,9 @@ Cypher does not currently prove:
 - external audit or certification.
 
 Cypher is a relay/storage component inside the current experimental backbone.
+
+---
+
+License: MIT.
+See the repository's LICENSE file for more information.
+
