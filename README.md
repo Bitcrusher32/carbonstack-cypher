@@ -1,4 +1,4 @@
-﻿# CarbonStackCypher
+# CarbonStackCypher
 
 CarbonStackCypher is the experimental relay/storage server for CarbonStack.
 
@@ -104,4 +104,10 @@ Cypher is a relay/storage component inside the current experimental backbone.
 
 License: MIT.
 See the repository's LICENSE file for more information.
+## Local operator runbook note
 
+The current local-only operator runbook skeleton is tracked in the CarbonStack doctrine/docs repo:
+
+    carbonstack/docs/144-local-cypher-operator-runbook-skeleton-v0.md
+
+Use explicit local-only settings for development/operator experiments, including CYPHER_ADDR=127.0.0.1:8080, an explicit CYPHER_DB path, and an explicit CYPHER_MIGRATIONS path. This remains pre-alpha local deployability work, not a production deployment guide.
