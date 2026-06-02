@@ -4,10 +4,12 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,31 +39,86 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) Migrate(dir string) error {
-	entries, err := os.ReadDir(dir)
+	if _, err := s.DB.Exec(`
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    migration_name TEXT PRIMARY KEY,
+    sha256 TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+);
+`); err != nil {
+		return fmt.Errorf("ensure schema_migrations table: %w", err)
+	}
+
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
 
-	var files []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		if filepath.Ext(entry.Name()) == ".sql" {
-			files = append(files, filepath.Join(dir, entry.Name()))
-		}
-	}
-
-	sort.Strings(files)
+	sort.Slice(files, func(i int, j int) bool {
+		return files[i].Name() < files[j].Name()
+	})
 
 	for _, file := range files {
-		body, err := os.ReadFile(file)
-		if err != nil {
-			return fmt.Errorf("read migration %s: %w", file, err)
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".sql") {
+			continue
 		}
 
-		if _, err := s.DB.Exec(string(body)); err != nil {
-			return fmt.Errorf("apply migration %s: %w", file, err)
+		path := filepath.Join(dir, file.Name())
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read migration %s: %w", file.Name(), err)
+		}
+
+		sum := sha256.Sum256(content)
+		checksum := hex.EncodeToString(sum[:])
+
+		var appliedChecksum string
+		err = s.DB.QueryRow(
+			"SELECT sha256 FROM schema_migrations WHERE migration_name = ? LIMIT 1",
+			file.Name(),
+		).Scan(&appliedChecksum)
+
+		switch {
+		case err == nil:
+			if appliedChecksum != checksum {
+				return fmt.Errorf(
+					"migration %s checksum mismatch: applied %s, current %s",
+					file.Name(),
+					appliedChecksum,
+					checksum,
+				)
+			}
+			continue
+
+		case errors.Is(err, sql.ErrNoRows):
+			// Apply below.
+
+		case err != nil:
+			return fmt.Errorf("read migration state %s: %w", file.Name(), err)
+		}
+
+		tx, err := s.DB.Begin()
+		if err != nil {
+			return fmt.Errorf("begin migration %s: %w", file.Name(), err)
+		}
+
+		if _, err := tx.Exec(string(content)); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("apply migration %s: %w", file.Name(), err)
+		}
+
+		if _, err := tx.Exec(
+			"INSERT INTO schema_migrations (migration_name, sha256, applied_at) VALUES (?, ?, ?)",
+			file.Name(),
+			checksum,
+			NowUTC(),
+		); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("record migration %s: %w", file.Name(), err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit migration %s: %w", file.Name(), err)
 		}
 	}
 
