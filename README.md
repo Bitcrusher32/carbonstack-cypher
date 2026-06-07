@@ -111,3 +111,12 @@ The current local-only operator runbook skeleton is tracked in the CarbonStack d
     carbonstack/docs/144-local-cypher-operator-runbook-skeleton-v0.md
 
 Use explicit local-only settings for development/operator experiments, including CYPHER_ADDR=127.0.0.1:8080, an explicit CYPHER_DB path, and an explicit CYPHER_MIGRATIONS path. This remains pre-alpha local deployability work, not a production deployment guide.
+
+## Relay Space boundary
+
+CarbonStackCypher has a planning note for the future Relay Space boundary:
+
+    docs/relay-space-boundary-v0.md
+
+Relay Space is routing/conversation infrastructure, not identity authority. Cypher may route encrypted envelopes and manage server-side access, but must not become plaintext authority, verified-device authority, or silent key-replacement authority.
+
