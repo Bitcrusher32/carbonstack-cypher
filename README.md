@@ -93,6 +93,14 @@ CarbonStackCypher has a component-local planning record for future Relay Space j
 
 Cypher may eventually provide routing membership, invite claim, and Relay Space-scoped envelope storage. It must not provide verified trust, identity authority, plaintext authority, or silent key-replacement authority.
 
+## Validation profile boundary
+
+CarbonStackCypher has a component-local planning record for future validation-profile participation:
+
+    docs/validation-profile-boundary-v0.md
+
+Future Cypher validation may prove routing/storage behavior under explicit generated/test state. It must not prove verified identity, local trust, OpenMLS safety, hostile-server safety, metadata privacy, or production readiness.
+
 ## What Cypher does not prove
 
 Cypher does not currently prove:
