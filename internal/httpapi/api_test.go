@@ -644,3 +644,232 @@ func TestStubContentTypeRejectsOpenMLSProtocolVersion(t *testing.T) {
 		t.Fatalf("expected unsupported_protocol_version, got %q", errResp.Error.Code)
 	}
 }
+
+func TestRelaySpaceHTTPLifecycle(t *testing.T) {
+	server := newTestServer(t)
+	defer server.Close()
+
+	alice := claimInvite(t, server.URL, "dev-invite", "alice-test")
+	aliceDevice := registerDevice(t, server.URL, alice.AccountID, "alice-relay-test", "stub-alice-public-key", "stub-alice-prekey")
+
+	space := createRelaySpace(t, server.URL, map[string]any{
+		"relay_space_id":        "relay-space-1",
+		"display_label":         "test relay space",
+		"created_by_account_id": alice.AccountID,
+		"created_by_device_id":  aliceDevice.DeviceID,
+	})
+
+	if space.RelaySpaceID != "relay-space-1" {
+		t.Fatalf("relay_space_id = %q, want relay-space-1", space.RelaySpaceID)
+	}
+	if space.DisplayLabel != "test relay space" {
+		t.Fatalf("display_label = %q, want test relay space", space.DisplayLabel)
+	}
+	if space.CreatedByAccountID != alice.AccountID {
+		t.Fatalf("created_by_account_id = %q, want %q", space.CreatedByAccountID, alice.AccountID)
+	}
+
+	list := listRelaySpaces(t, server.URL)
+	if len(list.RelaySpaces) != 1 {
+		t.Fatalf("expected 1 relay space, got %d", len(list.RelaySpaces))
+	}
+	if list.RelaySpaces[0].RelaySpaceID != space.RelaySpaceID {
+		t.Fatalf("list relay_space_id = %q, want %q", list.RelaySpaces[0].RelaySpaceID, space.RelaySpaceID)
+	}
+
+	got := getRelaySpace(t, server.URL, space.RelaySpaceID)
+	if got.RelaySpaceID != space.RelaySpaceID {
+		t.Fatalf("got relay_space_id = %q, want %q", got.RelaySpaceID, space.RelaySpaceID)
+	}
+
+	member := registerRelaySpaceMember(t, server.URL, space.RelaySpaceID, map[string]any{
+		"routing_member_id": "routing-member-1",
+		"account_id":        alice.AccountID,
+		"device_id":         aliceDevice.DeviceID,
+		"display_label":     "alice routing member",
+	})
+
+	if member.RoutingMemberID != "routing-member-1" {
+		t.Fatalf("routing_member_id = %q, want routing-member-1", member.RoutingMemberID)
+	}
+	if member.State != "active" {
+		t.Fatalf("member state = %q, want active", member.State)
+	}
+
+	members := listRelaySpaceMembers(t, server.URL, space.RelaySpaceID)
+	if len(members.Members) != 1 {
+		t.Fatalf("expected 1 relay space member, got %d", len(members.Members))
+	}
+	if members.Members[0].RoutingMemberID != member.RoutingMemberID {
+		t.Fatalf("member list mismatch")
+	}
+
+	invite := createRelaySpaceInvite(t, server.URL, space.RelaySpaceID, map[string]any{
+		"relay_space_invite_id": "relay-space-invite-1",
+		"invite_token":          "secret relay space invite token",
+		"display_code":          "8F3A-C91B-2D44",
+		"word_code":             "banana-wall-red-applesauce",
+		"created_by_member_id":  member.RoutingMemberID,
+		"max_claims":            1,
+		"note":                  "routing-only HTTP invite",
+	})
+
+	if invite.InviteToken != "secret relay space invite token" {
+		t.Fatalf("invite_token = %q, want original token", invite.InviteToken)
+	}
+	if invite.RelaySpaceInvite.RelaySpaceInviteID != "relay-space-invite-1" {
+		t.Fatalf("relay_space_invite_id = %q", invite.RelaySpaceInvite.RelaySpaceInviteID)
+	}
+	if invite.RelaySpaceInvite.RelaySpaceID != space.RelaySpaceID {
+		t.Fatalf("invite relay_space_id = %q, want %q", invite.RelaySpaceInvite.RelaySpaceID, space.RelaySpaceID)
+	}
+	if invite.RelaySpaceInvite.State != "active" {
+		t.Fatalf("invite state = %q, want active", invite.RelaySpaceInvite.State)
+	}
+	if invite.RelaySpaceInvite.WordCode != "banana-wall-red-applesauce" {
+		t.Fatalf("word_code = %q", invite.RelaySpaceInvite.WordCode)
+	}
+}
+
+func TestRelaySpaceHTTPRejectsMissingSpaceForSubresources(t *testing.T) {
+	server := newTestServer(t)
+	defer server.Close()
+
+	var errResp errorResponse
+	doPost(t, server.URL+"/v0/relay-spaces/missing/members", map[string]any{
+		"account_id": "account-1",
+	}, http.StatusNotFound, &errResp)
+
+	if errResp.Error.Code != "relay_space_not_found" {
+		t.Fatalf("expected relay_space_not_found, got %q", errResp.Error.Code)
+	}
+
+	doPost(t, server.URL+"/v0/relay-spaces/missing/invites", map[string]any{
+		"invite_token": "secret",
+	}, http.StatusNotFound, &errResp)
+
+	if errResp.Error.Code != "relay_space_not_found" {
+		t.Fatalf("expected relay_space_not_found, got %q", errResp.Error.Code)
+	}
+}
+
+func TestRelaySpaceHTTPDoesNotExposeTrustOrVerifiedFields(t *testing.T) {
+	server := newTestServer(t)
+	defer server.Close()
+
+	space := createRelaySpace(t, server.URL, map[string]any{
+		"relay_space_id": "relay-space-1",
+		"display_label":  "routing only",
+	})
+
+	payload, err := json.Marshal(space)
+	if err != nil {
+		t.Fatalf("marshal relay space response: %v", err)
+	}
+
+	lower := strings.ToLower(string(payload))
+	if strings.Contains(lower, "trust") {
+		t.Fatalf("relay space HTTP response must not expose trust authority fields: %s", string(payload))
+	}
+	if strings.Contains(lower, "verified") {
+		t.Fatalf("relay space HTTP response must not expose verified authority fields: %s", string(payload))
+	}
+}
+
+type relaySpaceHTTPResponse struct {
+	RelaySpaceID       string `json:"relay_space_id"`
+	DisplayLabel       string `json:"display_label"`
+	CreatedByAccountID string `json:"created_by_account_id"`
+	CreatedByDeviceID  string `json:"created_by_device_id"`
+	CreatedAt          string `json:"created_at"`
+	DisabledAt         string `json:"disabled_at"`
+}
+
+type relaySpacesListHTTPResponse struct {
+	RelaySpaces []relaySpaceHTTPResponse `json:"relay_spaces"`
+}
+
+type relaySpaceMemberHTTPResponse struct {
+	RoutingMemberID string `json:"routing_member_id"`
+	RelaySpaceID    string `json:"relay_space_id"`
+	AccountID       string `json:"account_id"`
+	DeviceID        string `json:"device_id"`
+	DisplayLabel    string `json:"display_label"`
+	State           string `json:"state"`
+	JoinedAt        string `json:"joined_at"`
+	LastSeenAt      string `json:"last_seen_at"`
+	DisabledAt      string `json:"disabled_at"`
+}
+
+type relaySpaceMembersListHTTPResponse struct {
+	RelaySpaceID string                         `json:"relay_space_id"`
+	Members      []relaySpaceMemberHTTPResponse `json:"members"`
+}
+
+type relaySpaceInviteHTTPResponse struct {
+	RelaySpaceInviteID string `json:"relay_space_invite_id"`
+	RelaySpaceID       string `json:"relay_space_id"`
+	InviteTokenHash    string `json:"invite_token_hash"`
+	DisplayCode        string `json:"display_code"`
+	WordCode           string `json:"word_code"`
+	CreatedByMemberID  string `json:"created_by_member_id"`
+	CreatedAt          string `json:"created_at"`
+	ExpiresAt          string `json:"expires_at"`
+	MaxClaims          *int   `json:"max_claims"`
+	ClaimCount         int    `json:"claim_count"`
+	State              string `json:"state"`
+	Note               string `json:"note"`
+}
+
+type createRelaySpaceInviteHTTPResponse struct {
+	RelaySpaceInvite relaySpaceInviteHTTPResponse `json:"relay_space_invite"`
+	InviteToken      string                       `json:"invite_token"`
+}
+
+func createRelaySpace(t *testing.T, serverURL string, body map[string]any) relaySpaceHTTPResponse {
+	t.Helper()
+
+	var resp relaySpaceHTTPResponse
+	doPost(t, serverURL+"/v0/relay-spaces", body, http.StatusCreated, &resp)
+	return resp
+}
+
+func listRelaySpaces(t *testing.T, serverURL string) relaySpacesListHTTPResponse {
+	t.Helper()
+
+	var resp relaySpacesListHTTPResponse
+	doGet(t, serverURL+"/v0/relay-spaces", http.StatusOK, &resp)
+	return resp
+}
+
+func getRelaySpace(t *testing.T, serverURL string, relaySpaceID string) relaySpaceHTTPResponse {
+	t.Helper()
+
+	var resp relaySpaceHTTPResponse
+	doGet(t, serverURL+"/v0/relay-spaces/"+relaySpaceID, http.StatusOK, &resp)
+	return resp
+}
+
+func registerRelaySpaceMember(t *testing.T, serverURL string, relaySpaceID string, body map[string]any) relaySpaceMemberHTTPResponse {
+	t.Helper()
+
+	var resp relaySpaceMemberHTTPResponse
+	doPost(t, serverURL+"/v0/relay-spaces/"+relaySpaceID+"/members", body, http.StatusCreated, &resp)
+	return resp
+}
+
+func listRelaySpaceMembers(t *testing.T, serverURL string, relaySpaceID string) relaySpaceMembersListHTTPResponse {
+	t.Helper()
+
+	var resp relaySpaceMembersListHTTPResponse
+	doGet(t, serverURL+"/v0/relay-spaces/"+relaySpaceID+"/members", http.StatusOK, &resp)
+	return resp
+}
+
+func createRelaySpaceInvite(t *testing.T, serverURL string, relaySpaceID string, body map[string]any) createRelaySpaceInviteHTTPResponse {
+	t.Helper()
+
+	var resp createRelaySpaceInviteHTTPResponse
+	doPost(t, serverURL+"/v0/relay-spaces/"+relaySpaceID+"/invites", body, http.StatusCreated, &resp)
+	return resp
+}

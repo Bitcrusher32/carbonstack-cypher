@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -39,6 +40,12 @@ func (a *API) Routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /v0/health", a.health)
+	mux.HandleFunc("POST /v0/relay-spaces", a.createRelaySpace)
+	mux.HandleFunc("GET /v0/relay-spaces", a.listRelaySpaces)
+	mux.HandleFunc("GET /v0/relay-spaces/{relay_space_id}", a.getRelaySpace)
+	mux.HandleFunc("POST /v0/relay-spaces/{relay_space_id}/invites", a.createRelaySpaceInvite)
+	mux.HandleFunc("POST /v0/relay-spaces/{relay_space_id}/members", a.registerRelaySpaceMember)
+	mux.HandleFunc("GET /v0/relay-spaces/{relay_space_id}/members", a.listRelaySpaceMembers)
 	mux.HandleFunc("POST /v0/dev/invites", a.createDevInvite)
 	mux.HandleFunc("POST /v0/invites/claim", a.claimInvite)
 	mux.HandleFunc("POST /v0/devices/register", a.registerDevice)
@@ -562,6 +569,223 @@ func (a *API) ackEnvelope(w http.ResponseWriter, r *http.Request) {
 		"delivery_state":  "acknowledged",
 		"acknowledged_at": now,
 	})
+}
+
+type createRelaySpaceRequest struct {
+	RelaySpaceID       string `json:"relay_space_id"`
+	DisplayLabel       string `json:"display_label"`
+	CreatedByAccountID string `json:"created_by_account_id"`
+	CreatedByDeviceID  string `json:"created_by_device_id"`
+}
+
+func (a *API) createRelaySpace(w http.ResponseWriter, r *http.Request) {
+	var req createRelaySpaceRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	space, err := a.store.CreateRelaySpace(db.CreateRelaySpaceInput{
+		RelaySpaceID:       req.RelaySpaceID,
+		DisplayLabel:       req.DisplayLabel,
+		CreatedByAccountID: req.CreatedByAccountID,
+		CreatedByDeviceID:  req.CreatedByDeviceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, space)
+}
+
+func (a *API) listRelaySpaces(w http.ResponseWriter, r *http.Request) {
+	spaces, err := a.store.ListRelaySpaces()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"relay_spaces": spaces,
+	})
+}
+
+func (a *API) getRelaySpace(w http.ResponseWriter, r *http.Request) {
+	relaySpaceID := strings.TrimSpace(r.PathValue("relay_space_id"))
+	if relaySpaceID == "" {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+
+	space, err := a.store.GetRelaySpace(relaySpaceID)
+	if errors.Is(err, db.ErrRelaySpaceNotFound) {
+		writeError(w, http.StatusNotFound, "relay_space_not_found", "relay space not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, space)
+}
+
+type createRelaySpaceInviteRequest struct {
+	RelaySpaceInviteID string `json:"relay_space_invite_id"`
+	InviteToken        string `json:"invite_token"`
+	InviteTokenHash    string `json:"invite_token_hash"`
+	DisplayCode        string `json:"display_code"`
+	WordCode           string `json:"word_code"`
+	CreatedByMemberID  string `json:"created_by_member_id"`
+	ExpiresAt          string `json:"expires_at"`
+	MaxClaims          *int   `json:"max_claims"`
+	State              string `json:"state"`
+	Note               string `json:"note"`
+}
+
+func (a *API) createRelaySpaceInvite(w http.ResponseWriter, r *http.Request) {
+	relaySpaceID := strings.TrimSpace(r.PathValue("relay_space_id"))
+	if relaySpaceID == "" {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+
+	if _, err := a.store.GetRelaySpace(relaySpaceID); errors.Is(err, db.ErrRelaySpaceNotFound) {
+		writeError(w, http.StatusNotFound, "relay_space_not_found", "relay space not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	var req createRelaySpaceInviteRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	req.InviteToken = strings.TrimSpace(req.InviteToken)
+	req.DisplayCode = strings.TrimSpace(req.DisplayCode)
+
+	if req.InviteToken == "" && strings.TrimSpace(req.InviteTokenHash) == "" {
+		req.InviteToken = uuid.NewString()
+	}
+	if req.DisplayCode == "" {
+		req.DisplayCode = defaultRelaySpaceDisplayCode(req.InviteToken)
+	}
+
+	invite, err := a.store.CreateRelaySpaceInvite(db.CreateRelaySpaceInviteInput{
+		RelaySpaceInviteID: req.RelaySpaceInviteID,
+		RelaySpaceID:       relaySpaceID,
+		InviteToken:        req.InviteToken,
+		InviteTokenHash:    req.InviteTokenHash,
+		DisplayCode:        req.DisplayCode,
+		WordCode:           req.WordCode,
+		CreatedByMemberID:  req.CreatedByMemberID,
+		ExpiresAt:          req.ExpiresAt,
+		MaxClaims:          req.MaxClaims,
+		State:              req.State,
+		Note:               req.Note,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"relay_space_invite": invite,
+		"invite_token":       req.InviteToken,
+	})
+}
+
+type registerRelaySpaceMemberRequest struct {
+	RoutingMemberID string `json:"routing_member_id"`
+	AccountID       string `json:"account_id"`
+	DeviceID        string `json:"device_id"`
+	DisplayLabel    string `json:"display_label"`
+	State           string `json:"state"`
+	LastSeenAt      string `json:"last_seen_at"`
+}
+
+func (a *API) registerRelaySpaceMember(w http.ResponseWriter, r *http.Request) {
+	relaySpaceID := strings.TrimSpace(r.PathValue("relay_space_id"))
+	if relaySpaceID == "" {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+
+	if _, err := a.store.GetRelaySpace(relaySpaceID); errors.Is(err, db.ErrRelaySpaceNotFound) {
+		writeError(w, http.StatusNotFound, "relay_space_not_found", "relay space not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	var req registerRelaySpaceMemberRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	req.AccountID = strings.TrimSpace(req.AccountID)
+	if req.AccountID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "account_id is required")
+		return
+	}
+
+	member, err := a.store.RegisterRelaySpaceMember(db.RegisterRelaySpaceMemberInput{
+		RoutingMemberID: req.RoutingMemberID,
+		RelaySpaceID:    relaySpaceID,
+		AccountID:       req.AccountID,
+		DeviceID:        req.DeviceID,
+		DisplayLabel:    req.DisplayLabel,
+		State:           req.State,
+		LastSeenAt:      req.LastSeenAt,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, member)
+}
+
+func (a *API) listRelaySpaceMembers(w http.ResponseWriter, r *http.Request) {
+	relaySpaceID := strings.TrimSpace(r.PathValue("relay_space_id"))
+	if relaySpaceID == "" {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+
+	if _, err := a.store.GetRelaySpace(relaySpaceID); errors.Is(err, db.ErrRelaySpaceNotFound) {
+		writeError(w, http.StatusNotFound, "relay_space_not_found", "relay space not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	members, err := a.store.ListRelaySpaceMembers(relaySpaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"relay_space_id": relaySpaceID,
+		"members":        members,
+	})
+}
+
+func defaultRelaySpaceDisplayCode(inviteToken string) string {
+	compact := strings.ToUpper(strings.ReplaceAll(inviteToken, "-", ""))
+	if len(compact) >= 12 {
+		return compact[:4] + "-" + compact[4:8] + "-" + compact[8:12]
+	}
+	if compact != "" {
+		return compact
+	}
+	generated := strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", ""))
+	return generated[:4] + "-" + generated[4:8] + "-" + generated[8:12]
 }
 
 func isSupportedContentType(contentType string) bool {
