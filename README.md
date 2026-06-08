@@ -85,6 +85,14 @@ For the full CarbonStack OpenMLS relay proof, use the runbook in the main `carbo
 
     docs/113-experimental-backbone-deployability-runbook-v0.md
 
+## Relay Space join/invite/member boundary
+
+CarbonStackCypher has a component-local planning record for future Relay Space join/invite/member mechanics:
+
+    docs/relay-space-join-invite-member-boundary-v0.md
+
+Cypher may eventually provide routing membership, invite claim, and Relay Space-scoped envelope storage. It must not provide verified trust, identity authority, plaintext authority, or silent key-replacement authority.
+
 ## What Cypher does not prove
 
 Cypher does not currently prove:
