@@ -101,6 +101,14 @@ CarbonStackCypher has a component-local planning record for future validation-pr
 
 Future Cypher validation may prove routing/storage behavior under explicit generated/test state. It must not prove verified identity, local trust, OpenMLS safety, hostile-server safety, metadata privacy, or production readiness.
 
+## Local-backbone go/no-go boundary
+
+CarbonStackCypher has a component-local boundary record for the v0.5.34 local-backbone go/no-go reassessment:
+
+    docs/local-backbone-go-no-go-boundary-v0.md
+
+The decision is a conditional GO for first narrow implementation planning, with Cypher Relay Space schema/API substrate as the preferred first target. This is not full local-backbone, not identity authority, and not verified trust.
+
 ## What Cypher does not prove
 
 Cypher does not currently prove:
