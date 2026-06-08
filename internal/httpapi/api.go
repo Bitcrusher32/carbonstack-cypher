@@ -43,6 +43,9 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("POST /v0/relay-spaces", a.createRelaySpace)
 	mux.HandleFunc("GET /v0/relay-spaces", a.listRelaySpaces)
 	mux.HandleFunc("GET /v0/relay-spaces/{relay_space_id}", a.getRelaySpace)
+	mux.HandleFunc("POST /v0/relay-spaces/{relay_space_id}/envelopes", a.submitRelaySpaceEnvelope)
+	mux.HandleFunc("GET /v0/relay-spaces/{relay_space_id}/devices/{device_id}/envelopes", a.relaySpaceDeviceEnvelopes)
+	mux.HandleFunc("POST /v0/relay-spaces/{relay_space_id}/envelopes/{envelope_id}/ack", a.ackRelaySpaceEnvelope)
 	mux.HandleFunc("POST /v0/relay-spaces/{relay_space_id}/invites", a.createRelaySpaceInvite)
 	mux.HandleFunc("POST /v0/relay-spaces/{relay_space_id}/members", a.registerRelaySpaceMember)
 	mux.HandleFunc("GET /v0/relay-spaces/{relay_space_id}/members", a.listRelaySpaceMembers)
@@ -566,6 +569,300 @@ func (a *API) ackEnvelope(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"envelope_id":     envelopeID,
+		"delivery_state":  "acknowledged",
+		"acknowledged_at": now,
+	})
+}
+
+func (a *API) submitRelaySpaceEnvelope(w http.ResponseWriter, r *http.Request) {
+	relaySpaceID := strings.TrimSpace(r.PathValue("relay_space_id"))
+	if relaySpaceID == "" {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+
+	if _, err := a.store.GetRelaySpace(relaySpaceID); errors.Is(err, db.ErrRelaySpaceNotFound) {
+		writeError(w, http.StatusNotFound, "relay_space_not_found", "relay space not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	var req submitEnvelopeRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	req.SenderDeviceID = strings.TrimSpace(req.SenderDeviceID)
+	req.RecipientDeviceID = strings.TrimSpace(req.RecipientDeviceID)
+	req.ContentType = strings.TrimSpace(req.ContentType)
+	req.ProtocolVersion = strings.TrimSpace(req.ProtocolVersion)
+	req.CiphertextB64 = strings.TrimSpace(req.CiphertextB64)
+
+	if req.SenderDeviceID == "" || req.RecipientDeviceID == "" || req.ContentType == "" || req.ProtocolVersion == "" || req.CiphertextB64 == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "sender_device_id, recipient_device_id, content_type, protocol_version, and ciphertext_b64 are required")
+		return
+	}
+	if !isSupportedContentType(req.ContentType) {
+		writeError(w, http.StatusBadRequest, "unsupported_content_type", "unsupported content_type")
+		return
+	}
+	if !isSupportedProtocolForContentType(req.ContentType, req.ProtocolVersion) {
+		writeError(w, http.StatusBadRequest, "unsupported_protocol_version", "unsupported protocol_version")
+		return
+	}
+	if len(req.CiphertextB64) > 65536 {
+		writeError(w, http.StatusBadRequest, "envelope_too_large", "ciphertext_b64 exceeds Phase 1 limit")
+		return
+	}
+
+	decodedPayload, err := base64.StdEncoding.DecodeString(req.CiphertextB64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_ciphertext", "ciphertext_b64 must be valid base64")
+		return
+	}
+
+	if !a.deviceExists(req.SenderDeviceID) {
+		writeError(w, http.StatusNotFound, "sender_device_not_found", "sender device not found")
+		return
+	}
+	if !a.deviceExists(req.RecipientDeviceID) {
+		writeError(w, http.StatusNotFound, "recipient_device_not_found", "recipient device not found")
+		return
+	}
+
+	payloadHash := sha256.Sum256(decodedPayload)
+	payloadSHA256 := hex.EncodeToString(payloadHash[:])
+	payloadSizeBytes := len(decodedPayload)
+
+	envelopeID := uuid.NewString()
+	now := db.NowUTC()
+
+	_, err = a.store.DB.Exec(
+		"INSERT INTO envelopes (envelope_id, relay_space_id, sender_device_id, recipient_device_id, content_type, protocol_version, ciphertext_b64, payload_sha256, payload_size_bytes, client_created_at, server_received_at, delivery_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		envelopeID,
+		relaySpaceID,
+		req.SenderDeviceID,
+		req.RecipientDeviceID,
+		req.ContentType,
+		req.ProtocolVersion,
+		req.CiphertextB64,
+		payloadSHA256,
+		payloadSizeBytes,
+		req.ClientCreatedAt,
+		now,
+		"queued",
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"envelope_id":        envelopeID,
+		"relay_space_id":     relaySpaceID,
+		"delivery_state":     "queued",
+		"server_received_at": now,
+		"payload_sha256":     payloadSHA256,
+		"payload_size_bytes": payloadSizeBytes,
+	})
+}
+
+func (a *API) relaySpaceDeviceEnvelopes(w http.ResponseWriter, r *http.Request) {
+	relaySpaceID := strings.TrimSpace(r.PathValue("relay_space_id"))
+	deviceID := strings.TrimSpace(r.PathValue("device_id"))
+
+	if relaySpaceID == "" || deviceID == "" {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+
+	if _, err := a.store.GetRelaySpace(relaySpaceID); errors.Is(err, db.ErrRelaySpaceNotFound) {
+		writeError(w, http.StatusNotFound, "relay_space_not_found", "relay space not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	if !a.deviceExists(deviceID) {
+		writeError(w, http.StatusNotFound, "device_not_found", "device not found")
+		return
+	}
+
+	rows, err := a.store.DB.Query(
+		"SELECT envelope_id, relay_space_id, sender_device_id, recipient_device_id, content_type, protocol_version, ciphertext_b64, COALESCE(payload_sha256, ''), COALESCE(payload_size_bytes, 0), COALESCE(client_created_at, ''), server_received_at, delivery_state FROM envelopes WHERE relay_space_id = ? AND recipient_device_id = ? AND delivery_state = 'queued' ORDER BY server_received_at ASC",
+		relaySpaceID,
+		deviceID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type relaySpaceEnvelopeResponse struct {
+		EnvelopeID        string `json:"envelope_id"`
+		RelaySpaceID      string `json:"relay_space_id"`
+		SenderDeviceID    string `json:"sender_device_id"`
+		RecipientDeviceID string `json:"recipient_device_id"`
+		ContentType       string `json:"content_type"`
+		ProtocolVersion   string `json:"protocol_version"`
+		CiphertextB64     string `json:"ciphertext_b64"`
+		PayloadSHA256     string `json:"payload_sha256"`
+		PayloadSizeBytes  int64  `json:"payload_size_bytes"`
+		ClientCreatedAt   string `json:"client_created_at"`
+		ServerReceivedAt  string `json:"server_received_at"`
+		DeliveryState     string `json:"delivery_state"`
+	}
+
+	resp := struct {
+		RelaySpaceID string                       `json:"relay_space_id"`
+		DeviceID     string                       `json:"device_id"`
+		Envelopes    []relaySpaceEnvelopeResponse `json:"envelopes"`
+	}{
+		RelaySpaceID: relaySpaceID,
+		DeviceID:     deviceID,
+		Envelopes:    []relaySpaceEnvelopeResponse{},
+	}
+
+	for rows.Next() {
+		var e relaySpaceEnvelopeResponse
+		if err := rows.Scan(
+			&e.EnvelopeID,
+			&e.RelaySpaceID,
+			&e.SenderDeviceID,
+			&e.RecipientDeviceID,
+			&e.ContentType,
+			&e.ProtocolVersion,
+			&e.CiphertextB64,
+			&e.PayloadSHA256,
+			&e.PayloadSizeBytes,
+			&e.ClientCreatedAt,
+			&e.ServerReceivedAt,
+			&e.DeliveryState,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+			return
+		}
+		resp.Envelopes = append(resp.Envelopes, e)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (a *API) ackRelaySpaceEnvelope(w http.ResponseWriter, r *http.Request) {
+	relaySpaceID := strings.TrimSpace(r.PathValue("relay_space_id"))
+	envelopeID := strings.TrimSpace(r.PathValue("envelope_id"))
+
+	if relaySpaceID == "" || envelopeID == "" {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+
+	if _, err := a.store.GetRelaySpace(relaySpaceID); errors.Is(err, db.ErrRelaySpaceNotFound) {
+		writeError(w, http.StatusNotFound, "relay_space_not_found", "relay space not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	var req ackEnvelopeRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	req.RecipientDeviceID = strings.TrimSpace(req.RecipientDeviceID)
+	if req.RecipientDeviceID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "recipient_device_id is required")
+		return
+	}
+
+	var actualRelaySpaceID string
+	var actualRecipient string
+	var deliveryState string
+	var existingAcknowledgedAt string
+
+	err := a.store.DB.QueryRow(
+		"SELECT COALESCE(e.relay_space_id, ''), e.recipient_device_id, e.delivery_state, COALESCE((SELECT acknowledged_at FROM envelope_acks WHERE envelope_id = e.envelope_id AND recipient_device_id = e.recipient_device_id ORDER BY acknowledged_at ASC LIMIT 1), '') FROM envelopes e WHERE e.envelope_id = ?",
+		envelopeID,
+	).Scan(&actualRelaySpaceID, &actualRecipient, &deliveryState, &existingAcknowledgedAt)
+
+	if err == sql.ErrNoRows {
+		writeError(w, http.StatusNotFound, "envelope_not_found", "envelope not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+	if actualRelaySpaceID != relaySpaceID {
+		writeError(w, http.StatusNotFound, "envelope_not_found", "envelope not found in relay space")
+		return
+	}
+	if actualRecipient != req.RecipientDeviceID {
+		writeError(w, http.StatusForbidden, "recipient_mismatch", "recipient_device_id does not match envelope recipient")
+		return
+	}
+
+	if deliveryState == "acknowledged" && existingAcknowledgedAt != "" {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"envelope_id":     envelopeID,
+			"relay_space_id":  relaySpaceID,
+			"delivery_state":  "acknowledged",
+			"acknowledged_at": existingAcknowledgedAt,
+		})
+		return
+	}
+
+	ackID := uuid.NewString()
+	now := db.NowUTC()
+
+	tx, err := a.store.DB.Begin()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	if existingAcknowledgedAt == "" {
+		if _, err := tx.Exec(
+			"INSERT INTO envelope_acks (ack_id, envelope_id, recipient_device_id, acknowledged_at) VALUES (?, ?, ?, ?)",
+			ackID,
+			envelopeID,
+			req.RecipientDeviceID,
+			now,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+			return
+		}
+	} else {
+		now = existingAcknowledgedAt
+	}
+
+	if _, err := tx.Exec(
+		"UPDATE envelopes SET delivery_state = 'acknowledged' WHERE envelope_id = ? AND relay_space_id = ?",
+		envelopeID,
+		relaySpaceID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"envelope_id":     envelopeID,
+		"relay_space_id":  relaySpaceID,
 		"delivery_state":  "acknowledged",
 		"acknowledged_at": now,
 	})

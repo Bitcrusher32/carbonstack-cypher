@@ -873,3 +873,208 @@ func createRelaySpaceInvite(t *testing.T, serverURL string, relaySpaceID string,
 	doPost(t, serverURL+"/v0/relay-spaces/"+relaySpaceID+"/invites", body, http.StatusCreated, &resp)
 	return resp
 }
+
+func TestRelaySpaceScopedEnvelopeLifecycle(t *testing.T) {
+	server := newTestServer(t)
+	defer server.Close()
+
+	alice := claimInvite(t, server.URL, "dev-invite", "alice-scoped")
+	createDevInvite(t, server.URL, "dev-invite-two")
+	bob := claimInvite(t, server.URL, "dev-invite-two", "bob-scoped")
+
+	aliceDevice := registerDevice(t, server.URL, alice.AccountID, "alice-scoped-device", "stub-alice-scoped-public-key", "stub-alice-scoped-prekey")
+	bobDevice := registerDevice(t, server.URL, bob.AccountID, "bob-scoped-device", "stub-bob-scoped-public-key", "stub-bob-scoped-prekey")
+
+	space := createRelaySpace(t, server.URL, map[string]any{
+		"relay_space_id":        "relay-space-scoped",
+		"display_label":         "scoped envelope space",
+		"created_by_account_id": alice.AccountID,
+		"created_by_device_id":  aliceDevice.DeviceID,
+	})
+
+	relayEnvelope := submitRelaySpaceEnvelope(t, server.URL, space.RelaySpaceID, aliceDevice.DeviceID, bobDevice.DeviceID, base64.StdEncoding.EncodeToString([]byte("scoped hello")))
+	if relayEnvelope.RelaySpaceID != space.RelaySpaceID {
+		t.Fatalf("relay_space_id = %q, want %q", relayEnvelope.RelaySpaceID, space.RelaySpaceID)
+	}
+	if relayEnvelope.DeliveryState != "queued" {
+		t.Fatalf("delivery_state = %q, want queued", relayEnvelope.DeliveryState)
+	}
+	if relayEnvelope.PayloadSizeBytes != len([]byte("scoped hello")) {
+		t.Fatalf("payload_size_bytes = %d", relayEnvelope.PayloadSizeBytes)
+	}
+
+	unscopedEnvelope := submitEnvelope(t, server.URL, aliceDevice.DeviceID, bobDevice.DeviceID, base64.StdEncoding.EncodeToString([]byte("unscoped hello")))
+
+	scopedInbox := getRelaySpaceInbox(t, server.URL, space.RelaySpaceID, bobDevice.DeviceID)
+	if len(scopedInbox.Envelopes) != 1 {
+		t.Fatalf("scoped inbox len = %d, want 1", len(scopedInbox.Envelopes))
+	}
+	if scopedInbox.Envelopes[0].EnvelopeID != relayEnvelope.EnvelopeID {
+		t.Fatalf("scoped inbox returned envelope %q, want %q", scopedInbox.Envelopes[0].EnvelopeID, relayEnvelope.EnvelopeID)
+	}
+	if scopedInbox.Envelopes[0].RelaySpaceID != space.RelaySpaceID {
+		t.Fatalf("scoped inbox relay_space_id = %q, want %q", scopedInbox.Envelopes[0].RelaySpaceID, space.RelaySpaceID)
+	}
+	if scopedInbox.Envelopes[0].EnvelopeID == unscopedEnvelope.EnvelopeID {
+		t.Fatal("scoped inbox must not return unscoped envelope")
+	}
+
+	ack := ackRelaySpaceEnvelope(t, server.URL, space.RelaySpaceID, relayEnvelope.EnvelopeID, bobDevice.DeviceID)
+	if ack.RelaySpaceID != space.RelaySpaceID {
+		t.Fatalf("ack relay_space_id = %q, want %q", ack.RelaySpaceID, space.RelaySpaceID)
+	}
+	if ack.DeliveryState != "acknowledged" {
+		t.Fatalf("ack delivery_state = %q, want acknowledged", ack.DeliveryState)
+	}
+
+	scopedInbox = getRelaySpaceInbox(t, server.URL, space.RelaySpaceID, bobDevice.DeviceID)
+	if len(scopedInbox.Envelopes) != 0 {
+		t.Fatalf("scoped inbox len after ack = %d, want 0", len(scopedInbox.Envelopes))
+	}
+}
+
+func TestRelaySpaceScopedEnvelopeRejectsWrongSpaceAndRecipient(t *testing.T) {
+	server := newTestServer(t)
+	defer server.Close()
+
+	alice := claimInvite(t, server.URL, "dev-invite", "alice-wrong-space")
+	createDevInvite(t, server.URL, "dev-invite-two")
+	bob := claimInvite(t, server.URL, "dev-invite-two", "bob-wrong-space")
+	createDevInvite(t, server.URL, "dev-invite-three")
+	carol := claimInvite(t, server.URL, "dev-invite-three", "carol-wrong-space")
+
+	aliceDevice := registerDevice(t, server.URL, alice.AccountID, "alice-device", "stub-alice-public-key", "stub-alice-prekey")
+	bobDevice := registerDevice(t, server.URL, bob.AccountID, "bob-device", "stub-bob-public-key", "stub-bob-prekey")
+	carolDevice := registerDevice(t, server.URL, carol.AccountID, "carol-device", "stub-carol-public-key", "stub-carol-prekey")
+
+	spaceA := createRelaySpace(t, server.URL, map[string]any{
+		"relay_space_id": "relay-space-a",
+		"display_label":  "space a",
+	})
+	spaceB := createRelaySpace(t, server.URL, map[string]any{
+		"relay_space_id": "relay-space-b",
+		"display_label":  "space b",
+	})
+
+	envelope := submitRelaySpaceEnvelope(t, server.URL, spaceA.RelaySpaceID, aliceDevice.DeviceID, bobDevice.DeviceID, base64.StdEncoding.EncodeToString([]byte("space a only")))
+
+	var errResp errorResponse
+	doGet(t, server.URL+"/v0/relay-spaces/"+spaceB.RelaySpaceID+"/devices/"+bobDevice.DeviceID+"/envelopes", http.StatusOK, &struct {
+		RelaySpaceID string                       `json:"relay_space_id"`
+		DeviceID     string                       `json:"device_id"`
+		Envelopes    []relaySpaceEnvelopeResponse `json:"envelopes"`
+	}{})
+
+	doPost(t, server.URL+"/v0/relay-spaces/"+spaceB.RelaySpaceID+"/envelopes/"+envelope.EnvelopeID+"/ack", map[string]any{
+		"recipient_device_id": bobDevice.DeviceID,
+	}, http.StatusNotFound, &errResp)
+	if errResp.Error.Code != "envelope_not_found" {
+		t.Fatalf("wrong-space ack error = %q, want envelope_not_found", errResp.Error.Code)
+	}
+
+	doPost(t, server.URL+"/v0/relay-spaces/"+spaceA.RelaySpaceID+"/envelopes/"+envelope.EnvelopeID+"/ack", map[string]any{
+		"recipient_device_id": carolDevice.DeviceID,
+	}, http.StatusForbidden, &errResp)
+	if errResp.Error.Code != "recipient_mismatch" {
+		t.Fatalf("wrong-recipient ack error = %q, want recipient_mismatch", errResp.Error.Code)
+	}
+}
+
+func TestRelaySpaceScopedEnvelopeRejectsMissingSpace(t *testing.T) {
+	server := newTestServer(t)
+	defer server.Close()
+
+	alice := claimInvite(t, server.URL, "dev-invite", "alice-missing-space")
+	createDevInvite(t, server.URL, "dev-invite-two")
+	bob := claimInvite(t, server.URL, "dev-invite-two", "bob-missing-space")
+
+	aliceDevice := registerDevice(t, server.URL, alice.AccountID, "alice-device", "stub-alice-public-key", "stub-alice-prekey")
+	bobDevice := registerDevice(t, server.URL, bob.AccountID, "bob-device", "stub-bob-public-key", "stub-bob-prekey")
+
+	var errResp errorResponse
+	doPost(t, server.URL+"/v0/relay-spaces/missing/envelopes", map[string]any{
+		"sender_device_id":    aliceDevice.DeviceID,
+		"recipient_device_id": bobDevice.DeviceID,
+		"content_type":        "carbonstack.message.text.stub.v0",
+		"protocol_version":    "stub-v0",
+		"ciphertext_b64":      base64.StdEncoding.EncodeToString([]byte("missing space")),
+	}, http.StatusNotFound, &errResp)
+	if errResp.Error.Code != "relay_space_not_found" {
+		t.Fatalf("missing-space submit error = %q, want relay_space_not_found", errResp.Error.Code)
+	}
+
+	doGet(t, server.URL+"/v0/relay-spaces/missing/devices/"+bobDevice.DeviceID+"/envelopes", http.StatusNotFound, &errResp)
+	if errResp.Error.Code != "relay_space_not_found" {
+		t.Fatalf("missing-space inbox error = %q, want relay_space_not_found", errResp.Error.Code)
+	}
+}
+
+type submitRelaySpaceEnvelopeResponse struct {
+	EnvelopeID       string `json:"envelope_id"`
+	RelaySpaceID     string `json:"relay_space_id"`
+	DeliveryState    string `json:"delivery_state"`
+	ServerReceivedAt string `json:"server_received_at"`
+	PayloadSHA256    string `json:"payload_sha256"`
+	PayloadSizeBytes int    `json:"payload_size_bytes"`
+}
+
+type relaySpaceEnvelopeResponse struct {
+	EnvelopeID        string `json:"envelope_id"`
+	RelaySpaceID      string `json:"relay_space_id"`
+	SenderDeviceID    string `json:"sender_device_id"`
+	RecipientDeviceID string `json:"recipient_device_id"`
+	ContentType       string `json:"content_type"`
+	ProtocolVersion   string `json:"protocol_version"`
+	CiphertextB64     string `json:"ciphertext_b64"`
+	PayloadSHA256     string `json:"payload_sha256"`
+	PayloadSizeBytes  int64  `json:"payload_size_bytes"`
+	ClientCreatedAt   string `json:"client_created_at"`
+	ServerReceivedAt  string `json:"server_received_at"`
+	DeliveryState     string `json:"delivery_state"`
+}
+
+type relaySpaceInboxResponse struct {
+	RelaySpaceID string                       `json:"relay_space_id"`
+	DeviceID     string                       `json:"device_id"`
+	Envelopes    []relaySpaceEnvelopeResponse `json:"envelopes"`
+}
+
+type ackRelaySpaceEnvelopeResponse struct {
+	EnvelopeID     string `json:"envelope_id"`
+	RelaySpaceID   string `json:"relay_space_id"`
+	DeliveryState  string `json:"delivery_state"`
+	AcknowledgedAt string `json:"acknowledged_at"`
+}
+
+func submitRelaySpaceEnvelope(t *testing.T, serverURL string, relaySpaceID string, senderDeviceID string, recipientDeviceID string, ciphertextB64 string) submitRelaySpaceEnvelopeResponse {
+	t.Helper()
+
+	var resp submitRelaySpaceEnvelopeResponse
+	doPost(t, serverURL+"/v0/relay-spaces/"+relaySpaceID+"/envelopes", map[string]any{
+		"sender_device_id":    senderDeviceID,
+		"recipient_device_id": recipientDeviceID,
+		"content_type":        "carbonstack.message.text.stub.v0",
+		"protocol_version":    "stub-v0",
+		"ciphertext_b64":      ciphertextB64,
+	}, http.StatusCreated, &resp)
+
+	return resp
+}
+
+func getRelaySpaceInbox(t *testing.T, serverURL string, relaySpaceID string, deviceID string) relaySpaceInboxResponse {
+	t.Helper()
+
+	var resp relaySpaceInboxResponse
+	doGet(t, serverURL+"/v0/relay-spaces/"+relaySpaceID+"/devices/"+deviceID+"/envelopes", http.StatusOK, &resp)
+	return resp
+}
+
+func ackRelaySpaceEnvelope(t *testing.T, serverURL string, relaySpaceID string, envelopeID string, recipientDeviceID string) ackRelaySpaceEnvelopeResponse {
+	t.Helper()
+
+	var resp ackRelaySpaceEnvelopeResponse
+	doPost(t, serverURL+"/v0/relay-spaces/"+relaySpaceID+"/envelopes/"+envelopeID+"/ack", map[string]any{
+		"recipient_device_id": recipientDeviceID,
+	}, http.StatusOK, &resp)
+	return resp
+}
