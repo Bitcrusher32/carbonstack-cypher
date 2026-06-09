@@ -2,26 +2,50 @@
 
 CarbonStackCypher is the experimental relay/storage server for CarbonStack.
 
-**It stores opaque envelopes, is not externally audited, does not handle plaintext, does not decide trust, is not production-certified.**
+It stores opaque envelopes.
 
-The current validated role of Cypher is to relay CarbonStackComms/OpenMLS sidecar artifacts through a simple HTTP JSON envelope API.
+It is not externally audited.
 
-_Related repositories: [carbonstack](https://git.bitcrusher32.win/bitcrusher32/carbonstack) / [carbonstack-comms](https://git.bitcrusher32.win/bitcrusher32/carbonstack-comms) / [carbonstack-os](https://git.bitcrusher32.win/bitcrusher32/carbonstack-os)_
+It does not handle plaintext.
 
+It does not decide trust.
+
+It is not production-certified.
+
+It is not identity authority.
+
+## Source of truth
+
+Use the main CarbonStack repository for public release framing, release assets, validation runbooks, roadmap state, and project-wide claim boundaries:
+
+    https://git.bitcrusher32.win/bitcrusher32/carbonstack
+
+Related repositories:
+
+    https://git.bitcrusher32.win/bitcrusher32/carbonstack
+    https://git.bitcrusher32.win/bitcrusher32/carbonstack-comms
+    https://git.bitcrusher32.win/bitcrusher32/carbonstack-os
+
+Gitea remains source of truth. GitHub mirrors may exist but are not release authority unless project policy changes.
 
 ## Current implemented behavior
 
 Cypher currently provides:
 
-- health check;
-- development invite/account/device registration;
-- envelope submission;
-- recipient inbox listing;
-- envelope acknowledgement;
-- OpenMLS artifact content-type support;
-- payload metadata over decoded envelope payload bytes.
+    health check;
+    development invite/account/device registration;
+    account device lookup;
+    envelope submission;
+    recipient inbox listing;
+    envelope acknowledgement;
+    OpenMLS artifact content-type support;
+    payload metadata over decoded envelope payload bytes;
+    Relay Space schema/API substrate;
+    Relay Space member/invite routing surfaces;
+    Relay Space-scoped envelope submit/inbox/ack routes;
+    scoped ack rejection for wrong Relay Space and wrong recipient.
 
-Current OpenMLS relay content types:
+Current OpenMLS relay content types include:
 
     carbonstack.mls.keypackage.v0
     carbonstack.mls.welcome.v0
@@ -34,6 +58,18 @@ Current OpenMLS relay protocol version:
 Existing stub content type:
 
     carbonstack.message.text.stub.v0
+
+## Relay Space boundary
+
+Relay Space is routing/conversation infrastructure.
+
+Relay Space is not identity authority.
+
+Cypher may route encrypted envelopes and manage server-side access, but must not become plaintext authority, verified-device authority, trust authority, or silent key-replacement authority.
+
+Server membership claims are not enough for client trust.
+
+Local Comms trust remains client-owned.
 
 ## Payload model
 
@@ -48,13 +84,13 @@ Cypher computes:
     payload_size_bytes
     payload_sha256
 
-Both describe decoded `ciphertext_b64` bytes.
+Both describe decoded ciphertext_b64 bytes.
 
 These fields are relay/debug/storage sanity metadata. They are not a cryptographic trust root.
 
 ## Routes
 
-Current route family:
+Current route families include:
 
     GET  /v0/health
     POST /v0/invites/claim
@@ -64,16 +100,13 @@ Current route family:
     GET  /v0/devices/{device_id}/envelopes
     POST /v0/envelopes/{envelope_id}/ack
 
+Relay Space routes include create/list/get/member/invite/scoped envelope behavior. See current tests and docs for exact route contracts.
+
 ## Database
 
 Cypher uses SQLite for current development and smoke testing.
 
-Current migrations:
-
-    migrations/001_init.sql
-    migrations/002_envelope_payload_metadata.sql
-
-The schema is pre-release and may change before any production claim.
+Current schema is pre-release and may change before any production claim.
 
 ## Known-good validation
 
@@ -81,66 +114,48 @@ Run from this repository:
 
     go test ./... -count=1
 
-For the full CarbonStack OpenMLS relay proof, use the runbook in the main `carbonstack` repo:
+For cross-repo validation, use the main CarbonStack runner:
 
-    docs/113-experimental-backbone-deployability-runbook-v0.md
+    cd ~/repos/carbonstack_umbrella/carbonstack/tools/carbonstack-validate
+    go test ./... -count=1
+    go run . --profile doctor
 
-## Relay Space join/invite/member boundary
+Use release-specific runbooks for release-package validation.
 
-CarbonStackCypher has a component-local planning record for future Relay Space join/invite/member mechanics:
+## Local operator note
 
-    docs/relay-space-join-invite-member-boundary-v0.md
+Use explicit local-only settings for development/operator experiments.
 
-Cypher may eventually provide routing membership, invite claim, and Relay Space-scoped envelope storage. It must not provide verified trust, identity authority, plaintext authority, or silent key-replacement authority.
+Current work remains pre-alpha local deployability work, not a production deployment guide.
 
-## Validation profile boundary
+## Docs
 
-CarbonStackCypher has a component-local planning record for future validation-profile participation:
+Component docs live under:
 
-    docs/validation-profile-boundary-v0.md
+    docs/
 
-Future Cypher validation may prove routing/storage behavior under explicit generated/test state. It must not prove verified identity, local trust, OpenMLS safety, hostile-server safety, metadata privacy, or production readiness.
+Start with:
 
-## Local-backbone go/no-go boundary
+    docs/README.md
 
-CarbonStackCypher has a component-local boundary record for the v0.5.34 local-backbone go/no-go reassessment:
-
-    docs/local-backbone-go-no-go-boundary-v0.md
-
-The decision is a conditional GO for first narrow implementation planning, with Cypher Relay Space schema/API substrate as the preferred first target. This is not full local-backbone, not identity authority, and not verified trust.
+The main CarbonStack repo remains the public release and roadmap authority.
 
 ## What Cypher does not prove
 
 Cypher does not currently prove:
 
-- production E2EE;
-- hostile-server safety;
-- metadata privacy;
-- secure identity;
-- secure local vault/storage;
-- rollback/replay safety against a malicious server;
-- multi-user production operations;
-- external audit or certification.
+    production E2EE;
+    hostile-server safety;
+    metadata privacy;
+    secure identity;
+    secure local vault/storage;
+    verified trust;
+    rollback/replay safety against a malicious server;
+    multi-user production operations;
+    public ingress safety;
+    external audit or certification.
 
 Cypher is a relay/storage component inside the current experimental backbone.
 
----
-
 License: MIT.
 See the repository's LICENSE file for more information.
-## Local operator runbook note
-
-The current local-only operator runbook skeleton is tracked in the CarbonStack doctrine/docs repo:
-
-    carbonstack/docs/144-local-cypher-operator-runbook-skeleton-v0.md
-
-Use explicit local-only settings for development/operator experiments, including CYPHER_ADDR=127.0.0.1:8080, an explicit CYPHER_DB path, and an explicit CYPHER_MIGRATIONS path. This remains pre-alpha local deployability work, not a production deployment guide.
-
-## Relay Space boundary
-
-CarbonStackCypher has a planning note for the future Relay Space boundary:
-
-    docs/relay-space-boundary-v0.md
-
-Relay Space is routing/conversation infrastructure, not identity authority. Cypher may route encrypted envelopes and manage server-side access, but must not become plaintext authority, verified-device authority, or silent key-replacement authority.
-
