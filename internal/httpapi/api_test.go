@@ -731,6 +731,247 @@ func TestRelaySpaceHTTPLifecycle(t *testing.T) {
 	}
 }
 
+func TestRelaySpaceHTTPEnforcesRelationalIntegrityAndExplicitMembership(t *testing.T) {
+	server := newTestServer(t)
+	defer server.Close()
+
+	alice := claimInvite(t, server.URL, "dev-invite", "alice-test")
+
+	createDevInvite(t, server.URL, "bob-integrity-invite")
+	bob := claimInvite(t, server.URL, "bob-integrity-invite", "bob-test")
+
+	aliceDevice := registerDevice(
+		t,
+		server.URL,
+		alice.AccountID,
+		"alice-integrity-device",
+		"alice-integrity-public-key",
+		"alice-integrity-prekey",
+	)
+	bobDevice := registerDevice(
+		t,
+		server.URL,
+		bob.AccountID,
+		"bob-integrity-device",
+		"bob-integrity-public-key",
+		"bob-integrity-prekey",
+	)
+
+	var errResp errorResponse
+	doPost(
+		t,
+		server.URL+"/v0/relay-spaces",
+		map[string]any{
+			"relay_space_id":       "device-without-account-space",
+			"display_label":        "invalid creator",
+			"created_by_device_id": aliceDevice.DeviceID,
+		},
+		http.StatusBadRequest,
+		&errResp,
+	)
+	if errResp.Error.Code != "account_required_for_device" {
+		t.Fatalf(
+			"error code = %q, want account_required_for_device",
+			errResp.Error.Code,
+		)
+	}
+
+	errResp = errorResponse{}
+	doPost(
+		t,
+		server.URL+"/v0/relay-spaces",
+		map[string]any{
+			"relay_space_id":        "mismatched-creator-space",
+			"display_label":         "invalid creator pair",
+			"created_by_account_id": alice.AccountID,
+			"created_by_device_id":  bobDevice.DeviceID,
+		},
+		http.StatusConflict,
+		&errResp,
+	)
+	if errResp.Error.Code != "account_device_mismatch" {
+		t.Fatalf(
+			"error code = %q, want account_device_mismatch",
+			errResp.Error.Code,
+		)
+	}
+
+	space := createRelaySpace(t, server.URL, map[string]any{
+		"relay_space_id":        "integrity-space",
+		"display_label":         "integrity test space",
+		"created_by_account_id": alice.AccountID,
+		"created_by_device_id":  aliceDevice.DeviceID,
+	})
+
+	membersBeforeRegistration := listRelaySpaceMembers(
+		t,
+		server.URL,
+		space.RelaySpaceID,
+	)
+	if len(membersBeforeRegistration.Members) != 0 {
+		t.Fatalf(
+			"member count = %d, want 0 before explicit registration",
+			len(membersBeforeRegistration.Members),
+		)
+	}
+
+	errResp = errorResponse{}
+	doPost(
+		t,
+		server.URL+"/v0/relay-spaces/"+space.RelaySpaceID+"/members",
+		map[string]any{
+			"routing_member_id": "missing-account-member",
+			"account_id":        "missing-account",
+			"device_id":         aliceDevice.DeviceID,
+		},
+		http.StatusNotFound,
+		&errResp,
+	)
+	if errResp.Error.Code != "account_not_found" {
+		t.Fatalf("error code = %q, want account_not_found", errResp.Error.Code)
+	}
+
+	errResp = errorResponse{}
+	doPost(
+		t,
+		server.URL+"/v0/relay-spaces/"+space.RelaySpaceID+"/members",
+		map[string]any{
+			"routing_member_id": "mismatched-member",
+			"account_id":        alice.AccountID,
+			"device_id":         bobDevice.DeviceID,
+		},
+		http.StatusConflict,
+		&errResp,
+	)
+	if errResp.Error.Code != "account_device_mismatch" {
+		t.Fatalf(
+			"error code = %q, want account_device_mismatch",
+			errResp.Error.Code,
+		)
+	}
+
+	aliceMember := registerRelaySpaceMember(
+		t,
+		server.URL,
+		space.RelaySpaceID,
+		map[string]any{
+			"routing_member_id": "alice-integrity-member",
+			"account_id":        alice.AccountID,
+			"device_id":         aliceDevice.DeviceID,
+			"display_label":     "alice integrity member",
+		},
+	)
+
+	errResp = errorResponse{}
+	doPost(
+		t,
+		server.URL+"/v0/relay-spaces/"+space.RelaySpaceID+"/invites",
+		map[string]any{
+			"relay_space_invite_id": "missing-creator-invite",
+			"invite_token":          "missing-creator-token",
+			"display_code":          "MISSING-CREATOR",
+			"created_by_member_id":  "missing-member",
+		},
+		http.StatusNotFound,
+		&errResp,
+	)
+	if errResp.Error.Code != "relay_space_member_not_found" {
+		t.Fatalf(
+			"error code = %q, want relay_space_member_not_found",
+			errResp.Error.Code,
+		)
+	}
+
+	otherSpace := createRelaySpace(t, server.URL, map[string]any{
+		"relay_space_id":        "other-integrity-space",
+		"display_label":         "other integrity space",
+		"created_by_account_id": bob.AccountID,
+		"created_by_device_id":  bobDevice.DeviceID,
+	})
+	bobOtherMember := registerRelaySpaceMember(
+		t,
+		server.URL,
+		otherSpace.RelaySpaceID,
+		map[string]any{
+			"routing_member_id": "bob-other-space-member",
+			"account_id":        bob.AccountID,
+			"device_id":         bobDevice.DeviceID,
+			"display_label":     "bob other-space member",
+		},
+	)
+
+	errResp = errorResponse{}
+	doPost(
+		t,
+		server.URL+"/v0/relay-spaces/"+space.RelaySpaceID+"/invites",
+		map[string]any{
+			"relay_space_invite_id": "wrong-space-creator-invite",
+			"invite_token":          "wrong-space-creator-token",
+			"display_code":          "WRONG-SPACE",
+			"created_by_member_id":  bobOtherMember.RoutingMemberID,
+		},
+		http.StatusConflict,
+		&errResp,
+	)
+	if errResp.Error.Code != "invite_creator_wrong_space" {
+		t.Fatalf(
+			"error code = %q, want invite_creator_wrong_space",
+			errResp.Error.Code,
+		)
+	}
+
+	disabledCreator := registerRelaySpaceMember(
+		t,
+		server.URL,
+		space.RelaySpaceID,
+		map[string]any{
+			"routing_member_id": "disabled-invite-creator",
+			"account_id":        bob.AccountID,
+			"display_label":     "disabled account-only creator",
+			"state":             "disabled",
+		},
+	)
+
+	errResp = errorResponse{}
+	doPost(
+		t,
+		server.URL+"/v0/relay-spaces/"+space.RelaySpaceID+"/invites",
+		map[string]any{
+			"relay_space_invite_id": "disabled-creator-invite",
+			"invite_token":          "disabled-creator-token",
+			"display_code":          "DISABLED-CREATOR",
+			"created_by_member_id":  disabledCreator.RoutingMemberID,
+		},
+		http.StatusConflict,
+		&errResp,
+	)
+	if errResp.Error.Code != "invite_creator_not_active" {
+		t.Fatalf(
+			"error code = %q, want invite_creator_not_active",
+			errResp.Error.Code,
+		)
+	}
+
+	invite := createRelaySpaceInvite(
+		t,
+		server.URL,
+		space.RelaySpaceID,
+		map[string]any{
+			"relay_space_invite_id": "valid-integrity-invite",
+			"invite_token":          "valid-integrity-token",
+			"display_code":          "VALID-INTEGRITY",
+			"created_by_member_id":  aliceMember.RoutingMemberID,
+		},
+	)
+	if invite.RelaySpaceInvite.CreatedByMemberID != aliceMember.RoutingMemberID {
+		t.Fatalf(
+			"created_by_member_id = %q, want %q",
+			invite.RelaySpaceInvite.CreatedByMemberID,
+			aliceMember.RoutingMemberID,
+		)
+	}
+}
+
 func TestRelaySpaceHTTPRejectsMissingSpaceForSubresources(t *testing.T) {
 	server := newTestServer(t)
 	defer server.Close()

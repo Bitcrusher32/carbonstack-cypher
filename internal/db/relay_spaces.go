@@ -21,9 +21,16 @@ const (
 )
 
 var (
-	ErrRelaySpaceNotFound       = errors.New("relay space not found")
-	ErrRelaySpaceInviteNotFound = errors.New("relay space invite not found")
-	ErrRelaySpaceMemberNotFound = errors.New("relay space member not found")
+	ErrRelaySpaceNotFound                 = errors.New("relay space not found")
+	ErrRelaySpaceInviteNotFound           = errors.New("relay space invite not found")
+	ErrRelaySpaceMemberNotFound           = errors.New("relay space member not found")
+	ErrRelaySpaceAccountRequiredForDevice = errors.New("relay space account is required when device is supplied")
+	ErrRelaySpaceAccountNotFound          = errors.New("relay space account not found")
+	ErrRelaySpaceDeviceNotFound           = errors.New("relay space device not found")
+	ErrRelaySpaceAccountDeviceMismatch    = errors.New("relay space account and device do not match")
+	ErrRelaySpaceInviteCreatorNotFound    = errors.New("relay space invite creator member not found")
+	ErrRelaySpaceInviteCreatorWrongSpace  = errors.New("relay space invite creator belongs to another relay space")
+	ErrRelaySpaceInviteCreatorInactive    = errors.New("relay space invite creator member is not active")
 )
 
 type RelaySpace struct {
@@ -96,6 +103,77 @@ type RegisterRelaySpaceMemberInput struct {
 	LastSeenAt      string
 }
 
+func (s *Store) validateRelaySpaceAccountDevice(accountID string, deviceID string) error {
+	accountID = strings.TrimSpace(accountID)
+	deviceID = strings.TrimSpace(deviceID)
+
+	if deviceID != "" && accountID == "" {
+		return ErrRelaySpaceAccountRequiredForDevice
+	}
+	if accountID == "" {
+		return nil
+	}
+
+	var storedAccountID string
+	err := s.DB.QueryRow(
+		"SELECT account_id FROM accounts WHERE account_id = ? LIMIT 1",
+		accountID,
+	).Scan(&storedAccountID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrRelaySpaceAccountNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lookup relay space account: %w", err)
+	}
+
+	if deviceID == "" {
+		return nil
+	}
+
+	var deviceAccountID string
+	err = s.DB.QueryRow(
+		"SELECT account_id FROM devices WHERE device_id = ? LIMIT 1",
+		deviceID,
+	).Scan(&deviceAccountID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrRelaySpaceDeviceNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lookup relay space device: %w", err)
+	}
+	if deviceAccountID != accountID {
+		return ErrRelaySpaceAccountDeviceMismatch
+	}
+
+	return nil
+}
+
+func (s *Store) validateRelaySpaceInviteCreator(
+	relaySpaceID string,
+	createdByMemberID string,
+) error {
+	createdByMemberID = strings.TrimSpace(createdByMemberID)
+	if createdByMemberID == "" {
+		return nil
+	}
+
+	member, err := s.GetRelaySpaceMember(createdByMemberID)
+	if errors.Is(err, ErrRelaySpaceMemberNotFound) {
+		return ErrRelaySpaceInviteCreatorNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lookup relay space invite creator: %w", err)
+	}
+	if member.RelaySpaceID != relaySpaceID {
+		return ErrRelaySpaceInviteCreatorWrongSpace
+	}
+	if member.State != RelaySpaceMemberStateActive || member.DisabledAt != "" {
+		return ErrRelaySpaceInviteCreatorInactive
+	}
+
+	return nil
+}
+
 func (s *Store) CreateRelaySpace(input CreateRelaySpaceInput) (RelaySpace, error) {
 	input.RelaySpaceID = strings.TrimSpace(input.RelaySpaceID)
 	input.DisplayLabel = strings.TrimSpace(input.DisplayLabel)
@@ -108,6 +186,13 @@ func (s *Store) CreateRelaySpace(input CreateRelaySpaceInput) (RelaySpace, error
 	}
 	if input.CreatedAt == "" {
 		input.CreatedAt = NowUTC()
+	}
+
+	if err := s.validateRelaySpaceAccountDevice(
+		input.CreatedByAccountID,
+		input.CreatedByDeviceID,
+	); err != nil {
+		return RelaySpace{}, err
 	}
 
 	_, err := s.DB.Exec(
@@ -236,6 +321,13 @@ func (s *Store) CreateRelaySpaceInvite(input CreateRelaySpaceInviteInput) (Relay
 		input.State = RelaySpaceInviteStateActive
 	}
 
+	if err := s.validateRelaySpaceInviteCreator(
+		input.RelaySpaceID,
+		input.CreatedByMemberID,
+	); err != nil {
+		return RelaySpaceInvite{}, err
+	}
+
 	_, err := s.DB.Exec(
 		"INSERT INTO relay_space_invites (relay_space_invite_id, relay_space_id, invite_token_hash, display_code, word_code, created_by_member_id, created_at, expires_at, max_claims, state, note) VALUES (?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''))",
 		input.RelaySpaceInviteID,
@@ -328,6 +420,13 @@ func (s *Store) RegisterRelaySpaceMember(input RegisterRelaySpaceMemberInput) (R
 	}
 	if input.JoinedAt == "" {
 		input.JoinedAt = NowUTC()
+	}
+
+	if err := s.validateRelaySpaceAccountDevice(
+		input.AccountID,
+		input.DeviceID,
+	); err != nil {
+		return RelaySpaceMember{}, err
 	}
 
 	_, err := s.DB.Exec(

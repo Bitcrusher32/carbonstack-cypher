@@ -904,6 +904,54 @@ func (a *API) ackRelaySpaceEnvelope(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func writeRelaySpaceIntegrityError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, db.ErrRelaySpaceAccountRequiredForDevice):
+		writeError(
+			w,
+			http.StatusBadRequest,
+			"account_required_for_device",
+			"account_id is required when device_id is supplied",
+		)
+	case errors.Is(err, db.ErrRelaySpaceAccountNotFound):
+		writeError(w, http.StatusNotFound, "account_not_found", "account not found")
+	case errors.Is(err, db.ErrRelaySpaceDeviceNotFound):
+		writeError(w, http.StatusNotFound, "device_not_found", "device not found")
+	case errors.Is(err, db.ErrRelaySpaceAccountDeviceMismatch):
+		writeError(
+			w,
+			http.StatusConflict,
+			"account_device_mismatch",
+			"device does not belong to account",
+		)
+	case errors.Is(err, db.ErrRelaySpaceInviteCreatorNotFound):
+		writeError(
+			w,
+			http.StatusNotFound,
+			"relay_space_member_not_found",
+			"invite creator routing member not found",
+		)
+	case errors.Is(err, db.ErrRelaySpaceInviteCreatorWrongSpace):
+		writeError(
+			w,
+			http.StatusConflict,
+			"invite_creator_wrong_space",
+			"invite creator routing member belongs to another relay space",
+		)
+	case errors.Is(err, db.ErrRelaySpaceInviteCreatorInactive):
+		writeError(
+			w,
+			http.StatusConflict,
+			"invite_creator_not_active",
+			"invite creator routing member is not active",
+		)
+	default:
+		return false
+	}
+
+	return true
+}
+
 type createRelaySpaceRequest struct {
 	RelaySpaceID       string `json:"relay_space_id"`
 	DisplayLabel       string `json:"display_label"`
@@ -924,6 +972,9 @@ func (a *API) createRelaySpace(w http.ResponseWriter, r *http.Request) {
 		CreatedByDeviceID:  req.CreatedByDeviceID,
 	})
 	if err != nil {
+		if writeRelaySpaceIntegrityError(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
 		return
 	}
@@ -1020,6 +1071,9 @@ func (a *API) createRelaySpaceInvite(w http.ResponseWriter, r *http.Request) {
 		Note:               req.Note,
 	})
 	if err != nil {
+		if writeRelaySpaceIntegrityError(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
 		return
 	}
@@ -1075,6 +1129,9 @@ func (a *API) registerRelaySpaceMember(w http.ResponseWriter, r *http.Request) {
 		LastSeenAt:      req.LastSeenAt,
 	})
 	if err != nil {
+		if writeRelaySpaceIntegrityError(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
 		return
 	}
