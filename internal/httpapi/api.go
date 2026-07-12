@@ -421,7 +421,7 @@ func (a *API) deviceEnvelopes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := a.store.DB.Query(
-		"SELECT envelope_id, sender_device_id, recipient_device_id, content_type, protocol_version, ciphertext_b64, COALESCE(payload_sha256, ''), COALESCE(payload_size_bytes, 0), COALESCE(client_created_at, ''), server_received_at, delivery_state FROM envelopes WHERE recipient_device_id = ? AND delivery_state = 'queued' ORDER BY server_received_at ASC",
+		"SELECT envelope_id, sender_device_id, recipient_device_id, content_type, protocol_version, ciphertext_b64, COALESCE(payload_sha256, ''), COALESCE(payload_size_bytes, 0), COALESCE(client_created_at, ''), server_received_at, delivery_state FROM envelopes WHERE recipient_device_id = ? AND relay_space_id IS NULL AND delivery_state = 'queued' ORDER BY server_received_at ASC",
 		deviceID,
 	)
 	if err != nil {

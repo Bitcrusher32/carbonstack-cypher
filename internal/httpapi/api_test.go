@@ -905,6 +905,17 @@ func TestRelaySpaceScopedEnvelopeLifecycle(t *testing.T) {
 
 	unscopedEnvelope := submitEnvelope(t, server.URL, aliceDevice.DeviceID, bobDevice.DeviceID, base64.StdEncoding.EncodeToString([]byte("unscoped hello")))
 
+	unscopedInbox := getInbox(t, server.URL, bobDevice.DeviceID)
+	if len(unscopedInbox.Envelopes) != 1 {
+		t.Fatalf("unscoped inbox len = %d, want 1", len(unscopedInbox.Envelopes))
+	}
+	if unscopedInbox.Envelopes[0].EnvelopeID != unscopedEnvelope.EnvelopeID {
+		t.Fatalf("unscoped inbox returned envelope %q, want %q", unscopedInbox.Envelopes[0].EnvelopeID, unscopedEnvelope.EnvelopeID)
+	}
+	if unscopedInbox.Envelopes[0].EnvelopeID == relayEnvelope.EnvelopeID {
+		t.Fatal("unscoped inbox must not return Relay Space-scoped envelope")
+	}
+
 	scopedInbox := getRelaySpaceInbox(t, server.URL, space.RelaySpaceID, bobDevice.DeviceID)
 	if len(scopedInbox.Envelopes) != 1 {
 		t.Fatalf("scoped inbox len = %d, want 1", len(scopedInbox.Envelopes))
@@ -930,6 +941,14 @@ func TestRelaySpaceScopedEnvelopeLifecycle(t *testing.T) {
 	scopedInbox = getRelaySpaceInbox(t, server.URL, space.RelaySpaceID, bobDevice.DeviceID)
 	if len(scopedInbox.Envelopes) != 0 {
 		t.Fatalf("scoped inbox len after ack = %d, want 0", len(scopedInbox.Envelopes))
+	}
+
+	unscopedInbox = getInbox(t, server.URL, bobDevice.DeviceID)
+	if len(unscopedInbox.Envelopes) != 1 {
+		t.Fatalf("unscoped inbox len after scoped ack = %d, want 1", len(unscopedInbox.Envelopes))
+	}
+	if unscopedInbox.Envelopes[0].EnvelopeID != unscopedEnvelope.EnvelopeID {
+		t.Fatalf("unscoped inbox after scoped ack returned %q, want %q", unscopedInbox.Envelopes[0].EnvelopeID, unscopedEnvelope.EnvelopeID)
 	}
 }
 
