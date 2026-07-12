@@ -826,6 +826,291 @@ type createRelaySpaceInviteHTTPResponse struct {
 	InviteToken      string                       `json:"invite_token"`
 }
 
+func TestRelaySpaceScopedEnvelopeRequiresActiveDeviceMembers(t *testing.T) {
+	server := newTestServer(t)
+	defer server.Close()
+
+	alice := claimInvite(
+		t,
+		server.URL,
+		"dev-invite",
+		"alice-membership",
+	)
+
+	createDevInvite(
+		t,
+		server.URL,
+		"bob-membership-invite",
+	)
+
+	bob := claimInvite(
+		t,
+		server.URL,
+		"bob-membership-invite",
+		"bob-membership",
+	)
+
+	aliceDevice := registerDevice(
+		t,
+		server.URL,
+		alice.AccountID,
+		"alice-membership-device",
+		"stub-alice-membership-key",
+		"stub-alice-membership-prekey",
+	)
+
+	bobDevice := registerDevice(
+		t,
+		server.URL,
+		bob.AccountID,
+		"bob-membership-device",
+		"stub-bob-membership-key",
+		"stub-bob-membership-prekey",
+	)
+
+	bobDisabledDevice := registerDevice(
+		t,
+		server.URL,
+		bob.AccountID,
+		"bob-disabled-device",
+		"stub-bob-disabled-key",
+		"stub-bob-disabled-prekey",
+	)
+
+	bobLeftDevice := registerDevice(
+		t,
+		server.URL,
+		bob.AccountID,
+		"bob-left-device",
+		"stub-bob-left-key",
+		"stub-bob-left-prekey",
+	)
+
+	space := createRelaySpace(
+		t,
+		server.URL,
+		map[string]any{
+			"relay_space_id": "relay-space-membership",
+			"display_label":  "membership enforcement",
+		},
+	)
+
+	payload := base64.StdEncoding.EncodeToString(
+		[]byte("membership enforcement"),
+	)
+
+	var errResp errorResponse
+
+	doPost(
+		t,
+		server.URL+
+			"/v0/relay-spaces/"+
+			space.RelaySpaceID+
+			"/envelopes",
+		map[string]any{
+			"sender_device_id":    aliceDevice.DeviceID,
+			"recipient_device_id": bobDevice.DeviceID,
+			"content_type":        "carbonstack.message.text.stub.v0",
+			"protocol_version":    "stub-v0",
+			"ciphertext_b64":      payload,
+		},
+		http.StatusForbidden,
+		&errResp,
+	)
+
+	if errResp.Error.Code !=
+		"sender_not_relay_member" {
+		t.Fatalf(
+			"missing sender membership error = %q, "+
+				"want sender_not_relay_member",
+			errResp.Error.Code,
+		)
+	}
+
+	registerRelaySpaceMember(
+		t,
+		server.URL,
+		space.RelaySpaceID,
+		map[string]any{
+			"routing_member_id": "alice-account-only-member",
+			"account_id":        alice.AccountID,
+			"display_label":     "account only does not authorize a device",
+		},
+	)
+
+	doPost(
+		t,
+		server.URL+
+			"/v0/relay-spaces/"+
+			space.RelaySpaceID+
+			"/envelopes",
+		map[string]any{
+			"sender_device_id":    aliceDevice.DeviceID,
+			"recipient_device_id": bobDevice.DeviceID,
+			"content_type":        "carbonstack.message.text.stub.v0",
+			"protocol_version":    "stub-v0",
+			"ciphertext_b64":      payload,
+		},
+		http.StatusForbidden,
+		&errResp,
+	)
+
+	if errResp.Error.Code !=
+		"sender_not_relay_member" {
+		t.Fatalf(
+			"account-only sender error = %q, "+
+				"want sender_not_relay_member",
+			errResp.Error.Code,
+		)
+	}
+
+	registerRelaySpaceMember(
+		t,
+		server.URL,
+		space.RelaySpaceID,
+		map[string]any{
+			"routing_member_id": "alice-active-device-member",
+			"account_id":        alice.AccountID,
+			"device_id":         aliceDevice.DeviceID,
+			"display_label":     "alice active device member",
+			"state":             "active",
+		},
+	)
+
+	doPost(
+		t,
+		server.URL+
+			"/v0/relay-spaces/"+
+			space.RelaySpaceID+
+			"/envelopes",
+		map[string]any{
+			"sender_device_id":    aliceDevice.DeviceID,
+			"recipient_device_id": bobDevice.DeviceID,
+			"content_type":        "carbonstack.message.text.stub.v0",
+			"protocol_version":    "stub-v0",
+			"ciphertext_b64":      payload,
+		},
+		http.StatusForbidden,
+		&errResp,
+	)
+
+	if errResp.Error.Code !=
+		"recipient_not_relay_member" {
+		t.Fatalf(
+			"missing recipient membership error = %q, "+
+				"want recipient_not_relay_member",
+			errResp.Error.Code,
+		)
+	}
+
+	registerRelaySpaceMember(
+		t,
+		server.URL,
+		space.RelaySpaceID,
+		map[string]any{
+			"routing_member_id": "bob-disabled-device-member",
+			"account_id":        bob.AccountID,
+			"device_id":         bobDisabledDevice.DeviceID,
+			"display_label":     "bob disabled member",
+			"state":             "disabled",
+		},
+	)
+
+	doPost(
+		t,
+		server.URL+
+			"/v0/relay-spaces/"+
+			space.RelaySpaceID+
+			"/envelopes",
+		map[string]any{
+			"sender_device_id":    aliceDevice.DeviceID,
+			"recipient_device_id": bobDisabledDevice.DeviceID,
+			"content_type":        "carbonstack.message.text.stub.v0",
+			"protocol_version":    "stub-v0",
+			"ciphertext_b64":      payload,
+		},
+		http.StatusForbidden,
+		&errResp,
+	)
+
+	if errResp.Error.Code !=
+		"recipient_not_relay_member" {
+		t.Fatalf(
+			"disabled recipient error = %q, "+
+				"want recipient_not_relay_member",
+			errResp.Error.Code,
+		)
+	}
+
+	registerRelaySpaceMember(
+		t,
+		server.URL,
+		space.RelaySpaceID,
+		map[string]any{
+			"routing_member_id": "bob-left-device-member",
+			"account_id":        bob.AccountID,
+			"device_id":         bobLeftDevice.DeviceID,
+			"display_label":     "bob left member",
+			"state":             "left",
+		},
+	)
+
+	doPost(
+		t,
+		server.URL+
+			"/v0/relay-spaces/"+
+			space.RelaySpaceID+
+			"/envelopes",
+		map[string]any{
+			"sender_device_id":    aliceDevice.DeviceID,
+			"recipient_device_id": bobLeftDevice.DeviceID,
+			"content_type":        "carbonstack.message.text.stub.v0",
+			"protocol_version":    "stub-v0",
+			"ciphertext_b64":      payload,
+		},
+		http.StatusForbidden,
+		&errResp,
+	)
+
+	if errResp.Error.Code !=
+		"recipient_not_relay_member" {
+		t.Fatalf(
+			"left recipient error = %q, "+
+				"want recipient_not_relay_member",
+			errResp.Error.Code,
+		)
+	}
+
+	registerRelaySpaceMember(
+		t,
+		server.URL,
+		space.RelaySpaceID,
+		map[string]any{
+			"routing_member_id": "bob-active-device-member",
+			"account_id":        bob.AccountID,
+			"device_id":         bobDevice.DeviceID,
+			"display_label":     "bob active device member",
+			"state":             "active",
+		},
+	)
+
+	envelope := submitRelaySpaceEnvelope(
+		t,
+		server.URL,
+		space.RelaySpaceID,
+		aliceDevice.DeviceID,
+		bobDevice.DeviceID,
+		payload,
+	)
+
+	if envelope.DeliveryState != "queued" {
+		t.Fatalf(
+			"delivery_state = %q, want queued",
+			envelope.DeliveryState,
+		)
+	}
+}
+
 func createRelaySpace(t *testing.T, serverURL string, body map[string]any) relaySpaceHTTPResponse {
 	t.Helper()
 
@@ -890,6 +1175,19 @@ func TestRelaySpaceScopedEnvelopeLifecycle(t *testing.T) {
 		"display_label":         "scoped envelope space",
 		"created_by_account_id": alice.AccountID,
 		"created_by_device_id":  aliceDevice.DeviceID,
+	})
+
+	registerRelaySpaceMember(t, server.URL, space.RelaySpaceID, map[string]any{
+		"routing_member_id": "alice-scoped-member",
+		"account_id":        alice.AccountID,
+		"device_id":         aliceDevice.DeviceID,
+		"display_label":     "alice scoped member",
+	})
+	registerRelaySpaceMember(t, server.URL, space.RelaySpaceID, map[string]any{
+		"routing_member_id": "bob-scoped-member",
+		"account_id":        bob.AccountID,
+		"device_id":         bobDevice.DeviceID,
+		"display_label":     "bob scoped member",
 	})
 
 	relayEnvelope := submitRelaySpaceEnvelope(t, server.URL, space.RelaySpaceID, aliceDevice.DeviceID, bobDevice.DeviceID, base64.StdEncoding.EncodeToString([]byte("scoped hello")))
@@ -973,6 +1271,19 @@ func TestRelaySpaceScopedEnvelopeRejectsWrongSpaceAndRecipient(t *testing.T) {
 	spaceB := createRelaySpace(t, server.URL, map[string]any{
 		"relay_space_id": "relay-space-b",
 		"display_label":  "space b",
+	})
+
+	registerRelaySpaceMember(t, server.URL, spaceA.RelaySpaceID, map[string]any{
+		"routing_member_id": "alice-space-a-member",
+		"account_id":        alice.AccountID,
+		"device_id":         aliceDevice.DeviceID,
+		"display_label":     "alice space a member",
+	})
+	registerRelaySpaceMember(t, server.URL, spaceA.RelaySpaceID, map[string]any{
+		"routing_member_id": "bob-space-a-member",
+		"account_id":        bob.AccountID,
+		"device_id":         bobDevice.DeviceID,
+		"display_label":     "bob space a member",
 	})
 
 	envelope := submitRelaySpaceEnvelope(t, server.URL, spaceA.RelaySpaceID, aliceDevice.DeviceID, bobDevice.DeviceID, base64.StdEncoding.EncodeToString([]byte("space a only")))

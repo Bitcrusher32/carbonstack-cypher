@@ -388,6 +388,35 @@ func (s *Store) GetRelaySpaceMember(routingMemberID string) (RelaySpaceMember, e
 	return member, nil
 }
 
+func (s *Store) IsActiveRelaySpaceDeviceMember(relaySpaceID string, deviceID string) (bool, error) {
+	relaySpaceID = strings.TrimSpace(relaySpaceID)
+	deviceID = strings.TrimSpace(deviceID)
+
+	if relaySpaceID == "" {
+		return false, errors.New("relay_space_id is required")
+	}
+	if deviceID == "" {
+		return false, errors.New("device_id is required")
+	}
+
+	var found int
+	err := s.DB.QueryRow(
+		"SELECT 1 FROM relay_space_members WHERE relay_space_id = ? AND device_id = ? AND state = ? AND disabled_at IS NULL LIMIT 1",
+		relaySpaceID,
+		deviceID,
+		RelaySpaceMemberStateActive,
+	).Scan(&found)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("lookup active relay space device member: %w", err)
+	}
+
+	return true, nil
+}
+
 func (s *Store) ListRelaySpaceMembers(relaySpaceID string) ([]RelaySpaceMember, error) {
 	relaySpaceID = strings.TrimSpace(relaySpaceID)
 	if relaySpaceID == "" {

@@ -632,6 +632,42 @@ func (a *API) submitRelaySpaceEnvelope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	senderIsMember, err := a.store.IsActiveRelaySpaceDeviceMember(
+		relaySpaceID,
+		req.SenderDeviceID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+	if !senderIsMember {
+		writeError(
+			w,
+			http.StatusForbidden,
+			"sender_not_relay_member",
+			"sender device is not an active member of the relay space",
+		)
+		return
+	}
+
+	recipientIsMember, err := a.store.IsActiveRelaySpaceDeviceMember(
+		relaySpaceID,
+		req.RecipientDeviceID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+	if !recipientIsMember {
+		writeError(
+			w,
+			http.StatusForbidden,
+			"recipient_not_relay_member",
+			"recipient device is not an active member of the relay space",
+		)
+		return
+	}
+
 	payloadHash := sha256.Sum256(decodedPayload)
 	payloadSHA256 := hex.EncodeToString(payloadHash[:])
 	payloadSizeBytes := len(decodedPayload)
