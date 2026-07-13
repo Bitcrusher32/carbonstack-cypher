@@ -729,6 +729,24 @@ func (a *API) relaySpaceDeviceEnvelopes(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	recipientIsMember, err := a.store.IsActiveRelaySpaceDeviceMember(
+		relaySpaceID,
+		deviceID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+	if !recipientIsMember {
+		writeError(
+			w,
+			http.StatusForbidden,
+			"recipient_not_relay_member",
+			"recipient device is not an active member of the relay space",
+		)
+		return
+	}
+
 	rows, err := a.store.DB.Query(
 		"SELECT envelope_id, relay_space_id, sender_device_id, recipient_device_id, content_type, protocol_version, ciphertext_b64, COALESCE(payload_sha256, ''), COALESCE(payload_size_bytes, 0), COALESCE(client_created_at, ''), server_received_at, delivery_state FROM envelopes WHERE relay_space_id = ? AND recipient_device_id = ? AND delivery_state = 'queued' ORDER BY server_received_at ASC",
 		relaySpaceID,
@@ -846,6 +864,24 @@ func (a *API) ackRelaySpaceEnvelope(w http.ResponseWriter, r *http.Request) {
 	}
 	if actualRecipient != req.RecipientDeviceID {
 		writeError(w, http.StatusForbidden, "recipient_mismatch", "recipient_device_id does not match envelope recipient")
+		return
+	}
+
+	recipientIsMember, err := a.store.IsActiveRelaySpaceDeviceMember(
+		relaySpaceID,
+		req.RecipientDeviceID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+	if !recipientIsMember {
+		writeError(
+			w,
+			http.StatusForbidden,
+			"recipient_not_relay_member",
+			"recipient device is not an active member of the relay space",
+		)
 		return
 	}
 

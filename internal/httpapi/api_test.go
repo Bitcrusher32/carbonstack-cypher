@@ -1527,6 +1527,13 @@ func TestRelaySpaceScopedEnvelopeRejectsWrongSpaceAndRecipient(t *testing.T) {
 		"display_label":     "bob space a member",
 	})
 
+	registerRelaySpaceMember(t, server.URL, spaceB.RelaySpaceID, map[string]any{
+		"routing_member_id": "bob-space-b-member",
+		"account_id":        bob.AccountID,
+		"device_id":         bobDevice.DeviceID,
+		"display_label":     "bob space b member",
+	})
+
 	envelope := submitRelaySpaceEnvelope(t, server.URL, spaceA.RelaySpaceID, aliceDevice.DeviceID, bobDevice.DeviceID, base64.StdEncoding.EncodeToString([]byte("space a only")))
 
 	var errResp errorResponse
