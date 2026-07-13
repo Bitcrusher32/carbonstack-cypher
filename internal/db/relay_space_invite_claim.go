@@ -74,10 +74,6 @@ func (s *Store) ClaimRelaySpaceInvite(
 		return RelaySpaceInviteClaimResult{}, fmt.Errorf("parse claimed_at: %w", err)
 	}
 
-	if err := s.validateRelaySpaceAccountDevice(input.AccountID, input.DeviceID); err != nil {
-		return RelaySpaceInviteClaimResult{}, err
-	}
-
 	for attempt := 0; attempt < 30; attempt++ {
 		result, err := s.claimRelaySpaceInviteOnce(
 			context.Background(),
@@ -118,6 +114,15 @@ func (s *Store) claimRelaySpaceInviteOnce(
 			_ = tx.Rollback()
 		}
 	}()
+
+	if err := validateRelaySpaceAccountDeviceForClaimTx(
+		ctx,
+		tx,
+		input.AccountID,
+		input.DeviceID,
+	); err != nil {
+		return RelaySpaceInviteClaimResult{}, err
+	}
 
 	inviteTokenHash := HashInviteCode(input.InviteToken)
 	invite, err := getRelaySpaceInviteByTokenHashTx(ctx, tx, inviteTokenHash)
@@ -312,6 +317,56 @@ func (s *Store) assembleRelaySpaceInviteClaimResult(
 		Idempotent:          idempotent,
 		ClaimConsumed:       claimConsumed,
 	}, nil
+}
+
+func validateRelaySpaceAccountDeviceForClaimTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	accountID string,
+	deviceID string,
+) error {
+	var storedAccountID string
+	err := tx.QueryRowContext(
+		ctx,
+		"SELECT account_id FROM accounts WHERE account_id = ? LIMIT 1",
+		accountID,
+	).Scan(&storedAccountID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrRelaySpaceAccountNotFound
+	}
+	if err != nil {
+		if isSQLiteBusyError(err) {
+			return errRelaySpaceInviteClaimRetry
+		}
+		return fmt.Errorf(
+			"lookup relay space account for invite claim: %w",
+			err,
+		)
+	}
+
+	var deviceAccountID string
+	err = tx.QueryRowContext(
+		ctx,
+		"SELECT account_id FROM devices WHERE device_id = ? LIMIT 1",
+		deviceID,
+	).Scan(&deviceAccountID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrRelaySpaceDeviceNotFound
+	}
+	if err != nil {
+		if isSQLiteBusyError(err) {
+			return errRelaySpaceInviteClaimRetry
+		}
+		return fmt.Errorf(
+			"lookup relay space device for invite claim: %w",
+			err,
+		)
+	}
+	if deviceAccountID != accountID {
+		return ErrRelaySpaceAccountDeviceMismatch
+	}
+
+	return nil
 }
 
 func getRelaySpaceInviteByTokenHashTx(
