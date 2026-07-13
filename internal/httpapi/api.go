@@ -44,6 +44,7 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("GET /v0/relay-spaces", a.listRelaySpaces)
 	mux.HandleFunc("GET /v0/relay-spaces/{relay_space_id}", a.getRelaySpace)
 	mux.HandleFunc("POST /v0/relay-spaces/{relay_space_id}/envelopes", a.submitRelaySpaceEnvelope)
+	mux.HandleFunc("POST /v0/relay-spaces/{relay_space_id}/keypackage-publications", a.publishRelaySpaceKeyPackage)
 	mux.HandleFunc("GET /v0/relay-spaces/{relay_space_id}/devices/{device_id}/envelopes", a.relaySpaceDeviceEnvelopes)
 	mux.HandleFunc("POST /v0/relay-spaces/{relay_space_id}/envelopes/{envelope_id}/ack", a.ackRelaySpaceEnvelope)
 	mux.HandleFunc("POST /v0/relay-spaces/{relay_space_id}/invites", a.createRelaySpaceInvite)

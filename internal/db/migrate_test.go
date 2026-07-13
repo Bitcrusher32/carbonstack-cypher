@@ -50,6 +50,7 @@ func TestMigrateRecordsAppliedMigrations(t *testing.T) {
 		"001_init.sql",
 		"002_envelope_payload_metadata.sql",
 		"003_relay_space_schema.sql",
+		"004_keypackage_publications.sql",
 	}
 	if len(names) != len(want) {
 		t.Fatalf("migration count = %d, want %d; names=%v", len(names), len(want), names)
